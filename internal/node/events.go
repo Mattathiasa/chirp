@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/mattathias/chirp/internal/store"
+	"github.com/Mattathiasa/chirp/internal/store"
 )
 
 // Event is pushed to subscribers (the SSE endpoint).

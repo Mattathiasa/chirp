@@ -19,11 +19,11 @@ import (
 	"net/url"
 	"time"
 
-	"github.com/mattathias/chirp/internal/app"
-	"github.com/mattathias/chirp/internal/identity"
-	"github.com/mattathias/chirp/internal/node"
-	"github.com/mattathias/chirp/internal/store"
-	"github.com/mattathias/chirp/internal/web"
+	"github.com/Mattathiasa/chirp/internal/app"
+	"github.com/Mattathiasa/chirp/internal/identity"
+	"github.com/Mattathiasa/chirp/internal/node"
+	"github.com/Mattathiasa/chirp/internal/store"
+	"github.com/Mattathiasa/chirp/internal/web"
 )
 
 const maxBody = 64 << 10

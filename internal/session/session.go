@@ -16,8 +16,8 @@ import (
 
 	"github.com/flynn/noise"
 
-	"github.com/mattathias/chirp/internal/identity"
-	"github.com/mattathias/chirp/internal/proto"
+	"github.com/Mattathiasa/chirp/internal/identity"
+	"github.com/Mattathiasa/chirp/internal/proto"
 )
 
 var suite = noise.NewCipherSuite(noise.DH25519, noise.CipherChaChaPoly, noise.HashSHA256)

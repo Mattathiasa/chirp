@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mattathias/chirp/internal/app"
-	"github.com/mattathias/chirp/internal/discovery"
-	"github.com/mattathias/chirp/internal/node"
+	"github.com/Mattathiasa/chirp/internal/app"
+	"github.com/Mattathiasa/chirp/internal/discovery"
+	"github.com/Mattathiasa/chirp/internal/node"
 )
 
 func newApp(t *testing.T, hub *discovery.Hub) *app.App {

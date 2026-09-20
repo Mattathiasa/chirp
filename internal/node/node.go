@@ -19,11 +19,11 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/mattathias/chirp/internal/discovery"
-	"github.com/mattathias/chirp/internal/identity"
-	"github.com/mattathias/chirp/internal/proto"
-	"github.com/mattathias/chirp/internal/session"
-	"github.com/mattathias/chirp/internal/store"
+	"github.com/Mattathiasa/chirp/internal/discovery"
+	"github.com/Mattathiasa/chirp/internal/identity"
+	"github.com/Mattathiasa/chirp/internal/proto"
+	"github.com/Mattathiasa/chirp/internal/session"
+	"github.com/Mattathiasa/chirp/internal/store"
 )
 
 // Errors surfaced to callers.

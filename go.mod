@@ -1,4 +1,4 @@
-module github.com/mattathias/chirp
+module github.com/Mattathiasa/chirp
 
 go 1.23
 

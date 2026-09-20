@@ -10,10 +10,10 @@ import (
 	"path/filepath"
 	"sync"
 
-	"github.com/mattathias/chirp/internal/discovery"
-	"github.com/mattathias/chirp/internal/identity"
-	"github.com/mattathias/chirp/internal/node"
-	"github.com/mattathias/chirp/internal/store"
+	"github.com/Mattathiasa/chirp/internal/discovery"
+	"github.com/Mattathiasa/chirp/internal/identity"
+	"github.com/Mattathiasa/chirp/internal/node"
+	"github.com/Mattathiasa/chirp/internal/store"
 )
 
 // Config configures an App.

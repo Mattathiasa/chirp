@@ -5,8 +5,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mattathias/chirp/internal/identity"
-	"github.com/mattathias/chirp/internal/store"
+	"github.com/Mattathiasa/chirp/internal/identity"
+	"github.com/Mattathiasa/chirp/internal/store"
 )
 
 // Trust states shown in the UI.

@@ -22,12 +22,12 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/mattathias/chirp/internal/api"
-	"github.com/mattathias/chirp/internal/app"
-	"github.com/mattathias/chirp/internal/discovery"
-	"github.com/mattathias/chirp/internal/identity"
-	"github.com/mattathias/chirp/internal/node"
-	"github.com/mattathias/chirp/internal/store"
+	"github.com/Mattathiasa/chirp/internal/api"
+	"github.com/Mattathiasa/chirp/internal/app"
+	"github.com/Mattathiasa/chirp/internal/discovery"
+	"github.com/Mattathiasa/chirp/internal/identity"
+	"github.com/Mattathiasa/chirp/internal/node"
+	"github.com/Mattathiasa/chirp/internal/store"
 )
 
 var botNames = map[string]bool{"Alex Rivera": true, "Sam Okafor": true, "Priya N.": true, "Dana Kim": true}

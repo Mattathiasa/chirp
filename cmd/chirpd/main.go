@@ -17,9 +17,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/mattathias/chirp/internal/api"
-	"github.com/mattathias/chirp/internal/app"
-	"github.com/mattathias/chirp/internal/discovery"
+	"github.com/Mattathiasa/chirp/internal/api"
+	"github.com/Mattathiasa/chirp/internal/app"
+	"github.com/Mattathiasa/chirp/internal/discovery"
 )
 
 // version is set at build time: -ldflags "-X main.version=v0.1.0".

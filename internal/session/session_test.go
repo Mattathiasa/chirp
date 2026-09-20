@@ -7,8 +7,8 @@ import (
 	"net"
 	"testing"
 
-	"github.com/mattathias/chirp/internal/identity"
-	"github.com/mattathias/chirp/internal/proto"
+	"github.com/Mattathiasa/chirp/internal/identity"
+	"github.com/Mattathiasa/chirp/internal/proto"
 )
 
 func pair(t *testing.T) (*Conn, *Conn, *identity.Identity, *identity.Identity) {

@@ -16,7 +16,7 @@ import (
 
 	"github.com/flynn/noise"
 
-	"github.com/mattathias/chirp/internal/identity"
+	"github.com/Mattathiasa/chirp/internal/identity"
 )
 
 var (

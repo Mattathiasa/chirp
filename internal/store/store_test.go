@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mattathias/chirp/internal/identity"
+	"github.com/Mattathiasa/chirp/internal/identity"
 )
 
 func open(t *testing.T) (*Store, string) {
