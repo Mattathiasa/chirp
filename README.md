@@ -6,6 +6,8 @@ Chirp finds nearby devices with mDNS, opens a Noise-encrypted TCP session direct
 
 ![Chat with the trust panel open](docs/img/chat.png)
 
+The design language (bold editorial: ink, paper, cobalt, tangerine) and a clickable prototype live in [`design/`](design/).
+
 ## Try it
 
 Needs Go 1.23+.

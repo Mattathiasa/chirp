@@ -79,9 +79,9 @@ function fmtTime(ts) {
   const t = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
   return d.toDateString() === new Date().toDateString() ? t : `${d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} ${t}`;
 }
-// Avatar hues come from a fixed palette (coral, violet, orchid, sky, pink, amber) so no key ever yields a clashing green.
-const HUES = [8, 262, 285, 205, 330, 38];
-const hue = (seed) => (seed && seed.length > 5 ? HUES[seed[5] % HUES.length] : HUES[1]);
+// Avatar fills come from a fixed editorial palette so every key gets a bold, on-brand colour.
+const TINTS = ['#5EE2A4', '#FFD84A', '#FF9EC7', '#C7B8FF', '#FF5A36', '#8FA0FF'];
+const hue = (seed) => (seed && seed.length > 5 ? TINTS[seed[5] % TINTS.length] : TINTS[1]);
 function initials(name) {
   const p = name.trim().split(/\s+/);
   return ((p[0]?.[0] || '?') + (p.length > 1 ? p[p.length - 1][0] : '')).toUpperCase();
@@ -95,7 +95,7 @@ function avatar(p, size = 46, pres = true) {
   const hh = hue(seed);
   const el = h('span', {
     class: 'avatar',
-    style: `width:${size}px;height:${size}px;border-radius:${Math.round(size * 0.34)}px;background:hsl(${hh} 45% 30%);color:hsl(${hh} 95% 90%);font-size:${Math.round(size * 0.3)}px`,
+    style: `width:${size}px;height:${size}px;border-radius:${Math.round(size * 0.34)}px;background:${hh};color:#0C0C14;font-size:${Math.round(size * 0.36)}px`,
     'aria-hidden': 'true',
   }, initials(p.name));
   if (pres) el.append(h('span', { class: 'pres ' + (p.online ? 'on' : p.nearby ? 'wait' : '') }));
@@ -108,14 +108,14 @@ function identicon(seedB64, size = 96) {
   svg.setAttribute('viewBox', '0 0 5 5'); svg.setAttribute('width', size); svg.setAttribute('height', size);
   svg.setAttribute('class', 'identicon'); svg.setAttribute('role', 'img'); svg.setAttribute('aria-label', 'Identicon derived from the key');
   const bg = document.createElementNS(ns, 'rect');
-  bg.setAttribute('width', 5); bg.setAttribute('height', 5); bg.setAttribute('fill', `hsl(${hh} 35% 22%)`);
+  bg.setAttribute('width', 5); bg.setAttribute('height', 5); bg.setAttribute('fill', hh);
   svg.append(bg);
   for (let y = 0; y < 5; y++) for (let x = 0; x < 3; x++) {
     if (((seed[y] >> x) & 1) === 0) continue;
     for (const xx of new Set([x, 4 - x])) {
       const r = document.createElementNS(ns, 'rect');
       r.setAttribute('x', xx); r.setAttribute('y', y); r.setAttribute('width', 1); r.setAttribute('height', 1);
-      r.setAttribute('fill', `hsl(${hh} 85% 74%)`); svg.append(r);
+      r.setAttribute('fill', '#0C0C14'); svg.append(r);
     }
   }
   return svg;
@@ -215,14 +215,14 @@ let $shell, $rail, $nav, $side, $main, $panel, composer, $ta, $sendBtn, $search;
 
 function mountShell() {
   $app.replaceChildren();
-  $rail = h('nav', { class: 'rail glass', 'aria-label': 'Sections' });
+  $rail = h('nav', { class: 'rail', 'aria-label': 'Sections' });
   $nav = h('aside', { class: 'nav pane', 'aria-label': 'Navigation' });
   $side = h('aside', { class: 'side pane', 'aria-label': 'Conversations' });
   $main = h('main', { class: 'main pane' });
-  $panel = h('aside', { class: 'panel glass', 'aria-label': 'Trust details' });
+  $panel = h('aside', { class: 'panel', 'aria-label': 'Trust details' });
   $search = h('input', { type: 'search', class: 'search', placeholder: 'Search', 'aria-label': 'Search people', autocomplete: 'off' });
   $search.addEventListener('input', () => { S.q = $search.value; renderSide(); });
-  $shell = h('div', { class: 'stage' }, $rail, h('div', { class: 'window glass' }, $nav, $side, $main, $panel));
+  $shell = h('div', { class: 'stage' }, $rail, h('div', { class: 'window' }, $nav, $side, $main, $panel));
   $app.append($shell);
   buildComposer();
   renderRail(); renderNav(); renderSide(); renderMain(); renderPanel();
@@ -337,7 +337,7 @@ function renderSide() {
 }
 function logoSvg() {
   const s = h('span', { style: 'display:inline-flex' });
-  s.innerHTML = '<svg width="22" height="22" viewBox="0 0 32 32" fill="none" stroke="#2A0E14" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 20c0-5 3-9 8-9 3 0 5 2 5 4s-1 3-3 3c-1 0-2-.6-2-1.6M22 15l3-1-2 3"/></svg>';
+  s.innerHTML = '<svg width="22" height="22" viewBox="0 0 32 32" fill="none" stroke="#0C0C14" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 20c0-5 3-9 8-9 3 0 5 2 5 4s-1 3-3 3c-1 0-2-.6-2-1.6M22 15l3-1-2 3"/></svg>';
   return s;
 }
 
@@ -527,7 +527,7 @@ function showBackup() {
     const label = h('div', { class: 'muted', style: 'font-size:13px' }, 'Choose a passphrase you will remember');
     const go = h('button', { class: 'btn primary', disabled: true }, 'Export encrypted backup');
     input.addEventListener('input', () => {
-      const s = strength(input.value), cols = ['#FF9C90', '#FFC46B', '#B7E36A', '#4ADE9E'];
+      const s = strength(input.value), cols = ['#E5323B', '#FF9B1A', '#9BD14A', '#1FBF7A'];
       [...bars.children].forEach((b, i) => { b.style.background = i < s ? cols[s - 1] : ''; });
       label.textContent = input.value ? ['Too short', 'Weak', 'Okay', 'Good', 'Strong'][s] : 'Choose a passphrase you will remember';
       go.disabled = input.value.length < 12;

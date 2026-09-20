@@ -1,0 +1,681 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body><title>Chirp Prototype</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Hanken+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+:root{color-scheme:light;--ink:#0C0C14;--ink2:#1A1A26;--paper:#ECEDF4;--paper2:#DFE1EC;--white:#FBFBFE;--cobalt:#2A3BFF;--cobalt2:#1B27C9;--tang:#FF5A36;--butter:#FFD84A;--mint:#5EE2A4;--pink:#FF9EC7;--lilac:#C7B8FF;--mute:#5A5B6E;--rule:#C9CCDC;--red:#E5323B;
+--display:'Bricolage Grotesque','Arial Black',system-ui,sans-serif;--body:'Hanken Grotesk',system-ui,-apple-system,sans-serif;--mono:'JetBrains Mono',ui-monospace,Menlo,monospace}
+*{box-sizing:border-box}
+html,body{height:100%}
+:root{padding-block:0}
+body{margin:0;background:var(--paper);color:var(--ink);font:500 16px/1.45 var(--body);-webkit-font-smoothing:antialiased}
+button{font:inherit;color:inherit;cursor:pointer;border:0;background:none;padding:0}
+input,textarea{font:inherit;color:inherit}
+:focus-visible{outline:3px solid var(--cobalt);outline-offset:2px;border-radius:6px}
+h1,h2,h3,p{margin:0}
+.mono{font-family:var(--mono)}
+.disp{font-family:var(--display);font-weight:800;letter-spacing:-.04em;line-height:.92}
+.eyebrow{font:500 12.5px/1 var(--mono);letter-spacing:.14em;text-transform:uppercase}
+.grow{flex:1;min-width:0}
+.row{display:flex;align-items:center}
+svg{display:block;flex:none}
+
+/* ---------- prototype chrome ---------- */
+#ground{height:100%;display:flex;align-items:center;justify-content:center;background:var(--paper);transition:background .3s}
+#frame{container:frame/inline-size;width:100%;height:100%;position:relative;overflow:hidden;background:var(--paper)}
+body.phone #ground{background:var(--cobalt);padding:16px}
+body.phone #frame{width:410px;max-width:100%;height:min(880px,100%);border-radius:48px;border:10px solid var(--ink);box-shadow:0 14px 0 rgba(12,12,20,.35)}
+.switch{position:fixed;right:14px;bottom:calc(14px + env(safe-area-inset-bottom,0px));z-index:100;display:flex;padding:4px;gap:2px;border-radius:999px;background:var(--ink);box-shadow:0 6px 0 rgba(12,12,20,.25)}
+.switch button{height:34px;padding:0 14px;border-radius:999px;color:#C9CCDC;font:700 13px var(--body)}
+.switch button[aria-pressed=true]{background:var(--butter);color:var(--ink)}
+body.phone .switch{right:auto;left:16px;bottom:calc(16px + env(safe-area-inset-bottom,0px))}
+#toast{position:absolute;left:50%;top:18px;transform:translate(-50%,-140%);z-index:90;padding:12px 20px;border-radius:999px;background:var(--ink);color:var(--paper);font-weight:700;font-size:14px;transition:transform .25s;max-width:calc(100% - 32px);text-align:center}
+#toast.on{transform:translate(-50%,0)}
+#toast.bad{background:var(--red)}
+
+/* ---------- buttons, chips ---------- */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:10px;height:52px;padding:0 26px;border-radius:999px;font-weight:700;font-size:16px;white-space:nowrap;transition:transform .12s,box-shadow .12s}
+.btn:active{transform:translateY(2px)}
+.btn.ink{background:var(--ink);color:var(--paper)}
+.btn.tang{background:var(--tang);color:var(--ink);box-shadow:0 5px 0 var(--ink)}
+.btn.tang:active{box-shadow:0 2px 0 var(--ink)}
+.btn.cobalt{background:var(--cobalt);color:#fff}
+.btn.butter{background:var(--butter);color:var(--ink);box-shadow:0 5px 0 var(--ink)}
+.btn.ghost{border:2px solid var(--ink)}
+.btn.ghostw{border:2px solid var(--paper);color:var(--paper)}
+.btn.soft{background:var(--paper2)}
+.btn.red{background:var(--red);color:#fff}
+.btn.sm{height:40px;padding:0 18px;font-size:14px}
+.btn[disabled]{opacity:.4;cursor:not-allowed;box-shadow:none}
+.chip{display:inline-flex;align-items:center;gap:5px;height:26px;padding:0 11px;border-radius:999px;font-size:12px;font-weight:700;letter-spacing:.02em;white-space:nowrap}
+.chip.ok{background:var(--mint);color:var(--ink)}
+.chip.warn{background:var(--butter);color:var(--ink)}
+.chip.bad{background:var(--red);color:#fff}
+.chip.dim{background:var(--paper2);color:var(--mute)}
+.chip.ink{background:var(--ink);color:var(--paper)}
+.chip.road{background:transparent;border:1.5px dashed var(--mute);color:var(--mute)}
+.ib{width:44px;height:44px;border-radius:14px;display:grid;place-items:center;flex:none}
+.ib:hover{background:var(--paper2)}
+.ib.dark{background:var(--ink);color:var(--paper)}
+.av{position:relative;flex:none;display:inline-block}
+.av>b{display:grid;place-items:center;width:100%;height:100%;font:800 1em var(--display);letter-spacing:-.02em}
+.av>i{position:absolute;right:-3px;bottom:-3px;width:30%;min-width:12px;aspect-ratio:1;border-radius:50%;border:3px solid var(--paper);background:var(--mute)}
+.av>i.on{background:var(--mint)}.av>i.wait{background:var(--butter)}
+
+/* ---------- landing ---------- */
+.landing{height:100%;overflow-y:auto;overflow-x:hidden;background:var(--paper);scroll-behavior:smooth}
+.nav{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:32px;padding:18px 48px;background:var(--paper);border-bottom:2px solid var(--ink)}
+.nav a{font-weight:700;font-size:15px;cursor:pointer}
+.logo{display:flex;align-items:center;gap:10px;font:800 28px var(--display);letter-spacing:-.05em}
+.logo span{display:grid;place-items:center;width:38px;height:38px;border-radius:12px;background:var(--tang)}
+.hero{position:relative;display:grid;grid-template-columns:minmax(0,1.25fr) minmax(0,.9fr);gap:32px;padding:64px 48px 72px;align-items:center}
+.hero h1{font:800 clamp(44px,8.6cqw,136px)/.88 var(--display);letter-spacing:-.05em;text-wrap:balance}
+.hero h1 mark{background:var(--tang);color:var(--ink);padding:0 .12em;border-radius:.14em;display:inline-block;transform:rotate(-2deg)}
+.hero p.lead{font-size:20px;line-height:1.45;max-width:34ch;margin:28px 0 32px;font-weight:500}
+.stackcards{position:relative;height:600px}
+.sc-phone{position:absolute;right:20px;top:0;width:300px;height:560px;border-radius:44px;background:var(--cobalt);border:6px solid var(--ink);padding:18px;display:flex;flex-direction:column;gap:10px;box-shadow:12px 14px 0 var(--ink);transform:rotate(3deg)}
+.sc-phone .b{padding:10px 14px;border-radius:20px;font-size:14px;line-height:1.35;font-weight:600;max-width:82%}
+.sc-phone .b.t{background:var(--white);color:var(--ink);align-self:flex-start;border-bottom-left-radius:5px}
+.sc-phone .b.m{background:var(--butter);color:var(--ink);align-self:flex-end;border-bottom-right-radius:5px}
+.float{position:absolute;padding:12px 16px;border-radius:20px;border:2px solid var(--ink);background:var(--white);box-shadow:6px 6px 0 var(--ink);font-weight:700;font-size:14px;display:flex;align-items:center;gap:10px}
+.marq{background:var(--ink);color:var(--butter);overflow:hidden;white-space:nowrap;padding:22px 0;border-block:2px solid var(--ink)}
+.marq>div{display:inline-flex;gap:40px;animation:marq 38s linear infinite;font:800 34px var(--display);letter-spacing:-.03em;text-transform:uppercase}
+.marq span.s{color:var(--tang)}
+@keyframes marq{to{transform:translateX(-50%)}}
+.sec{padding:96px 48px}
+.sec h2{font:800 clamp(38px,6.2cqw,92px)/.92 var(--display);letter-spacing:-.045em;text-wrap:balance}
+.steps{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:20px;margin-top:56px}
+.step{border:2px solid var(--ink);border-radius:32px;padding:32px;min-height:400px;display:flex;flex-direction:column;gap:14px;box-shadow:8px 8px 0 var(--ink)}
+.step .n{font:800 128px/.8 var(--display);letter-spacing:-.06em;margin-bottom:auto}
+.step h3{font:800 34px/1 var(--display);letter-spacing:-.04em}
+.step p{font-size:16.5px;line-height:1.45}
+.step code{font-family:var(--mono);font-size:13px;background:rgba(12,12,20,.12);padding:2px 7px;border-radius:6px}
+.dark{background:var(--ink);color:var(--paper)}
+.meshwrap{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.1fr);gap:48px;align-items:center}
+.facts{display:flex;flex-direction:column;margin-top:36px}
+.facts div{display:flex;gap:16px;padding:18px 0;border-top:1px solid #3A3B50;font-size:17px}
+.facts b{font:800 30px/1 var(--display);letter-spacing:-.04em;color:var(--butter);min-width:110px}
+.trustgrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:24px;margin-top:48px}
+.tcard{border:2px solid var(--ink);border-radius:32px;padding:28px;display:flex;flex-direction:column;gap:18px}
+.fp{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.fp span{padding:8px 0;text-align:center;border-radius:9px;background:rgba(12,12,20,.09);font:500 15px var(--mono)}
+.fp.d span{background:rgba(255,255,255,.22)}
+.fp span.diff{background:var(--red);color:#fff}
+table.cmp{width:100%;border-collapse:collapse;margin-top:48px;font-size:18px}
+table.cmp th,table.cmp td{padding:20px 18px;text-align:left;border-bottom:2px solid var(--ink)}
+table.cmp th{font:800 26px var(--display);letter-spacing:-.03em}
+table.cmp td.y{background:var(--butter);font-weight:700}
+.faq{margin-top:40px;border-top:2px solid var(--ink)}
+.faq .q{border-bottom:2px solid var(--ink)}
+.faq .q>button{width:100%;text-align:left;display:flex;align-items:center;gap:20px;padding:26px 4px;font:800 clamp(22px,2.6cqw,34px)/1.05 var(--display);letter-spacing:-.03em}
+.faq .q>button svg{transition:transform .2s;margin-left:auto}
+.faq .q.open>button svg{transform:rotate(45deg)}
+.faq .a{display:none;padding:0 4px 28px;max-width:70ch;font-size:17.5px;line-height:1.55}
+.faq .q.open .a{display:block}
+.cta{background:var(--cobalt);color:#fff;padding:110px 48px;display:flex;flex-direction:column;gap:32px;align-items:flex-start}
+.cta h2{font:800 clamp(44px,9cqw,150px)/.86 var(--display);letter-spacing:-.05em;max-width:12ch}
+.code{font:500 15px var(--mono);background:var(--ink);color:var(--butter);padding:16px 22px;border-radius:16px}
+.foot{display:flex;gap:24px;align-items:center;flex-wrap:wrap;padding:36px 48px;background:var(--ink);color:var(--paper);font-size:14px}
+
+/* ---------- onboarding ---------- */
+.ob{height:100%;display:grid;grid-template-columns:minmax(0,.9fr) minmax(0,1.1fr)}
+.ob-l{padding:44px 48px;display:flex;flex-direction:column;color:var(--ink);transition:background .35s}
+.ob-l .big{font:800 clamp(140px,22cqw,340px)/.8 var(--display);letter-spacing:-.07em;margin-top:auto}
+.ob-r{padding:44px 64px;display:flex;flex-direction:column;justify-content:center;gap:24px;overflow-y:auto;background:var(--paper)}
+.ob-r h1{font:800 clamp(38px,5cqw,76px)/.92 var(--display);letter-spacing:-.045em;text-wrap:balance}
+.ob-r p.sub{font-size:18px;line-height:1.5;max-width:46ch}
+.dots{display:flex;gap:8px}.dots i{height:8px;flex:1;max-width:56px;border-radius:4px;background:rgba(12,12,20,.2)}.dots i.on{background:var(--ink)}
+.field{display:flex;flex-direction:column;gap:8px}
+.field label{font:500 12.5px var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--mute)}
+.field input{height:64px;padding:0 22px;border:2px solid var(--ink);border-radius:18px;background:var(--white);font:700 24px var(--display);letter-spacing:-.02em}
+.field input.pw{font:500 17px var(--body);height:56px}
+.field input:focus{outline:0;box-shadow:0 5px 0 var(--cobalt);border-color:var(--cobalt)}
+.term{background:var(--ink);color:var(--butter);border-radius:20px;padding:20px 22px;font:500 14px/1.9 var(--mono);min-height:168px}
+.term .ok{color:var(--mint)}
+.bars{display:flex;gap:6px}.bars i{flex:1;height:8px;border-radius:4px;background:var(--rule)}
+.toggle{display:flex;align-items:center;gap:16px;padding:18px 0;border-bottom:2px solid var(--ink)}
+.toggle .t{font-weight:700;font-size:17px}.toggle .n{font-size:14px;color:var(--mute)}
+.sw{position:relative;width:60px;height:34px;border-radius:17px;background:var(--rule);flex:none;border:2px solid var(--ink);transition:background .15s}
+.sw::after{content:"";position:absolute;top:2px;left:2px;width:26px;height:26px;border-radius:50%;background:var(--ink);transition:transform .15s}
+.sw[aria-checked=true]{background:var(--mint)}.sw[aria-checked=true]::after{transform:translateX(26px)}
+.sw[disabled]{opacity:.55}
+
+/* ---------- app shell ---------- */
+.app{height:100%;display:grid;grid-template-columns:88px 392px minmax(0,1fr);background:var(--paper)}
+.app.p{grid-template-columns:88px 392px minmax(0,1fr) 360px}
+.app.wide{grid-template-columns:88px minmax(0,1fr)}
+.rail{background:var(--ink);display:flex;flex-direction:column;align-items:center;gap:8px;padding:18px 0}
+.rail .lg{width:46px;height:46px;border-radius:15px;background:var(--tang);display:grid;place-items:center;margin-bottom:14px}
+.rb{position:relative;width:56px;height:56px;border-radius:18px;display:grid;place-items:center;color:#A9ABC4}
+.rb:hover{color:#fff;background:var(--ink2)}
+.rb[aria-current=true]{background:var(--butter);color:var(--ink)}
+.rb em{position:absolute;top:4px;right:2px;min-width:20px;height:20px;padding:0 5px;border-radius:10px;background:var(--tang);color:var(--ink);font:800 11px/20px var(--body);text-align:center;font-style:normal;border:2px solid var(--ink)}
+.rail .sp{flex:1}
+.pane-l{display:flex;flex-direction:column;min-height:0;border-right:2px solid var(--ink)}
+.ph{padding:26px 24px 12px;display:flex;flex-direction:column;gap:16px}
+.ph h1{font:800 56px/.9 var(--display);letter-spacing:-.05em}
+.search{display:flex;align-items:center;gap:10px;height:50px;padding:0 16px;border:2px solid var(--ink);border-radius:16px;background:var(--white);color:var(--mute);width:100%;text-align:left;font-weight:600}
+.strip{display:flex;gap:14px;padding:6px 24px 14px;overflow-x:auto}
+.strip button{display:flex;flex-direction:column;align-items:center;gap:6px;font-size:12px;font-weight:700;flex:none}
+.list{flex:1;overflow-y:auto;padding:4px 12px 20px}
+.sect{padding:16px 12px 8px;display:flex;align-items:center;gap:8px;font:500 12px var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--mute)}
+.item{display:flex;align-items:center;gap:14px;width:100%;padding:12px;border-radius:20px;text-align:left;border:2px solid transparent}
+.item:hover{background:var(--paper2)}
+.item[aria-current=true]{background:var(--white);border-color:var(--ink);box-shadow:4px 4px 0 var(--ink)}
+.item .nm{font:800 18px var(--display);letter-spacing:-.03em;display:flex;align-items:center;gap:6px}
+.item .pv{font-size:14px;color:var(--mute);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:500}
+.item .pv.w{color:#8A5A00;font-weight:700}
+.item .mt{display:flex;flex-direction:column;align-items:flex-end;gap:6px;font:500 11.5px var(--mono);color:var(--mute)}
+.badge{min-width:22px;height:22px;padding:0 6px;border-radius:11px;background:var(--cobalt);color:#fff;font:800 12px/22px var(--body);text-align:center}
+.thread{display:flex;flex-direction:column;min-width:0;min-height:0;background:var(--white)}
+.th{display:flex;align-items:center;gap:14px;padding:16px 24px;border-bottom:2px solid var(--ink);background:var(--paper)}
+.th h2{font:800 28px/1 var(--display);letter-spacing:-.04em}
+.th .st{font:500 12.5px var(--mono);color:var(--mute);margin-top:4px}
+.th .st.on{color:#0B7A4B;font-weight:500}
+.back{display:none}
+.banner{display:flex;gap:14px;align-items:center;padding:14px 24px;border-bottom:2px solid var(--ink);font-size:15px;font-weight:600}
+.banner.bad{background:var(--red);color:#fff}.banner.warn{background:var(--butter)}.banner.info{background:var(--lilac)}
+.msgs{flex:1;min-height:0;overflow-y:auto;padding:24px 32px 12px;display:flex;flex-direction:column;gap:8px}
+.day{align-self:center;font:500 12px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--mute);padding:6px 14px;border-radius:999px;background:var(--paper)}
+.m{display:flex;flex-direction:column;gap:4px;max-width:min(560px,78%)}
+.m.me{align-self:flex-end;align-items:flex-end}.m.th2{align-self:flex-start}
+.bub{padding:12px 18px;border-radius:24px;font-size:16.5px;line-height:1.4;white-space:pre-wrap;overflow-wrap:anywhere;font-weight:500}
+.m.me .bub{background:var(--cobalt);color:#fff;border-bottom-right-radius:6px}
+.m.th2 .bub{background:var(--white);border:2px solid var(--ink);border-bottom-left-radius:6px}
+.who{font:800 13px var(--display);letter-spacing:-.01em;padding-left:6px}
+.stat{display:flex;align-items:center;gap:5px;font:500 11.5px var(--mono);color:var(--mute);padding:0 6px}
+.stat.q{background:var(--butter);color:var(--ink);border-radius:999px;padding:3px 10px 3px 8px;font-weight:500}
+.stat.ok{color:#0B7A4B}
+.photo{width:260px;height:180px;border-radius:24px;border:2px solid var(--ink);position:relative;overflow:hidden;background:var(--butter)}
+.filec{display:flex;align-items:center;gap:14px;padding:14px 18px;border:2px solid var(--ink);border-radius:20px;background:var(--white);min-width:260px}
+.typing{display:inline-flex;gap:4px;padding:14px 18px;border-radius:24px;background:var(--paper);border:2px solid var(--ink);border-bottom-left-radius:6px;align-self:flex-start}
+.typing i{width:7px;height:7px;border-radius:50%;background:var(--ink);animation:bl 1s infinite}.typing i:nth-child(2){animation-delay:.15s}.typing i:nth-child(3){animation-delay:.3s}
+@keyframes bl{0%,60%,100%{opacity:.25;transform:none}30%{opacity:1;transform:translateY(-3px)}}
+.reacts{display:flex;gap:6px;flex-wrap:wrap;padding-left:4px}
+.reacts button{height:26px;padding:0 10px;border-radius:999px;border:1.5px solid var(--ink);background:var(--white);font:700 12px var(--body)}
+.reacts button.me{background:var(--butter)}
+.composer{display:flex;align-items:flex-end;gap:10px;margin:8px 20px 20px;padding:8px 8px 8px 12px;border:2px solid var(--ink);border-radius:30px;background:var(--white)}
+.composer:focus-within{box-shadow:0 5px 0 var(--cobalt);border-color:var(--cobalt)}
+.composer textarea{flex:1;min-width:0;border:0;outline:0;resize:none;background:transparent;padding:11px 4px;max-height:140px;line-height:22px;font-size:16.5px}
+.composer textarea:disabled{color:var(--mute)}
+.send{width:48px;height:48px;border-radius:50%;background:var(--tang);color:var(--ink);display:grid;place-items:center;flex:none;border:2px solid var(--ink)}
+.send:disabled{background:var(--paper2);border-color:var(--rule);color:var(--mute);cursor:not-allowed}
+.panel{background:var(--butter);border-left:2px solid var(--ink);overflow-y:auto;padding:24px;display:flex;flex-direction:column;gap:18px;min-height:0}
+.panel.bad{background:var(--tang)}
+.panel h3{font:800 34px/.95 var(--display);letter-spacing:-.045em}
+.pcard{background:var(--white);border:2px solid var(--ink);border-radius:22px;padding:18px;display:flex;flex-direction:column;gap:12px}
+.pcard h4{margin:0;font:500 12px var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--mute)}
+.words{display:flex;flex-wrap:wrap;gap:8px}.words span{padding:7px 13px;border-radius:12px;background:var(--butter);border:2px solid var(--ink);font-weight:800;font-family:var(--display);font-size:16px}
+.tabs2{display:flex;gap:6px;padding:5px;border:2px solid var(--ink);border-radius:999px;background:var(--white)}
+.tabs2 button{flex:1;height:36px;border-radius:999px;font-weight:700;font-size:13.5px}
+.tabs2 button[aria-pressed=true]{background:var(--ink);color:var(--paper)}
+.media{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.media div{aspect-ratio:1;border-radius:16px;border:2px solid var(--ink);position:relative;overflow:hidden}
+.mtabbar{display:none}
+
+/* pages */
+.page{overflow-y:auto;padding:32px 48px 56px;background:var(--paper);display:flex;flex-direction:column;gap:28px;min-height:0}
+.page>h1{font:800 clamp(52px,7cqw,104px)/.88 var(--display);letter-spacing:-.05em}
+.tiles{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}
+.tile{border:2px solid var(--ink);border-radius:26px;padding:22px;display:flex;flex-direction:column;gap:6px;box-shadow:6px 6px 0 var(--ink)}
+.tile b{font:800 64px/.9 var(--display);letter-spacing:-.05em}
+.tile span{font:500 12px var(--mono);letter-spacing:.12em;text-transform:uppercase}
+.grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px}
+.card{border:2px solid var(--ink);border-radius:28px;padding:24px;background:var(--white);display:flex;flex-direction:column;gap:14px}
+.card h3{font:800 26px/1 var(--display);letter-spacing:-.04em}
+.card.c{background:var(--cobalt);color:#fff}.card.b{background:var(--butter)}.card.k{background:var(--ink);color:var(--paper)}.card.t{background:var(--tang)}
+.log{font:500 13px/1.75 var(--mono);max-height:300px;overflow-y:auto}
+.log time{color:#8B8DA6;margin-right:12px}.log .bad{color:#FF8A78}.log .ok{color:var(--mint)}
+.radar{position:relative;aspect-ratio:1;max-width:520px;width:100%;margin:0 auto}
+.radar .ring{position:absolute;border:2px dashed rgba(255,255,255,.4);border-radius:50%}
+.radar .sweep{position:absolute;inset:0;border-radius:50%;background:conic-gradient(from 0deg,rgba(255,216,74,.55),transparent 28%);animation:sw 4s linear infinite}
+@keyframes sw{to{transform:rotate(360deg)}}
+.radar .pt{position:absolute;transform:translate(-50%,-50%);display:flex;flex-direction:column;align-items:center;gap:4px;font-size:12px;font-weight:800;color:#fff}
+.ob-row{display:flex;align-items:center;gap:14px;padding:14px 0;border-bottom:2px solid var(--ink)}
+.ob-row:last-child{border:0}
+.seg{display:flex;gap:6px;padding:5px;border:2px solid var(--ink);border-radius:999px;background:var(--white)}
+.seg button{flex:1;height:40px;border-radius:999px;font-weight:700;font-size:14px}
+.seg button[aria-pressed=true]{background:var(--ink);color:var(--paper)}
+.qr{display:grid;grid-template-columns:repeat(21,1fr);width:220px;height:220px;padding:14px;background:#fff;border:2px solid var(--ink);border-radius:22px}
+
+/* modal + palette */
+.scrim{position:absolute;inset:0;z-index:60;background:rgba(12,12,20,.6);display:flex;align-items:center;justify-content:center;padding:20px}
+.modal{width:min(560px,100%);max-height:100%;overflow-y:auto;background:var(--paper);border:2px solid var(--ink);border-radius:32px;padding:28px;display:flex;flex-direction:column;gap:18px;box-shadow:10px 10px 0 var(--ink)}
+.modal h2{font:800 40px/.95 var(--display);letter-spacing:-.045em}
+.pal{align-self:flex-start;margin-top:8vh;width:min(640px,100%);background:var(--white);border:2px solid var(--ink);border-radius:28px;box-shadow:10px 10px 0 var(--ink);overflow:hidden}
+.pal input{width:100%;height:68px;border:0;outline:0;padding:0 24px;font:700 22px var(--display);letter-spacing:-.02em;background:transparent;border-bottom:2px solid var(--ink)}
+.pal .res{max-height:52vh;overflow-y:auto;padding:8px}
+.pal .res button{display:flex;align-items:center;gap:14px;width:100%;padding:12px 14px;border-radius:16px;text-align:left}
+.pal .res button:hover,.pal .res button:focus{background:var(--butter);outline:0}
+
+/* ---------- narrow (phone or small window) ---------- */
+@container frame (max-width:900px){
+#toast{top:auto;bottom:100px;transform:translate(-50%,160%)}#toast.on{transform:translate(-50%,0)}
+.scrim.sheet{align-items:flex-end;padding:0}.scrim.sheet .modal{border-radius:32px 32px 0 0;width:100%;box-shadow:none}
+ .nav{padding:14px 18px;gap:16px}.nav .links{display:none}.nav .btn{margin-left:auto}
+ .hero{grid-template-columns:1fr;padding:36px 18px 48px}.stackcards{height:520px;margin-top:8px}.sc-phone{right:auto;left:50%;margin-left:-150px}
+ .hero p.lead{font-size:18px}
+ .sec{padding:64px 18px}.steps{grid-template-columns:1fr}.step{min-height:320px}.step .n{font-size:96px}
+ .meshwrap{grid-template-columns:1fr;gap:28px}.trustgrid{grid-template-columns:1fr}
+ table.cmp{font-size:14px}table.cmp th{font-size:18px}table.cmp th,table.cmp td{padding:14px 8px}
+ .cta{padding:64px 18px}.foot{padding:28px 18px}
+ .ob{grid-template-columns:1fr;grid-template-rows:auto 1fr}.ob-l{padding:20px 18px 18px;flex-direction:row;align-items:center;gap:14px}.ob-l .big{font-size:64px;margin:0 0 0 auto}.ob-l .dots{display:none}.ob-r{padding:24px 18px}
+ .ob-l .obtext{display:none}
+ .app,.app.p,.app.wide{grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr) auto}
+ .rail{display:none}
+ .mtabbar{display:flex;gap:4px;padding:8px 10px calc(8px + env(safe-area-inset-bottom,0px));background:var(--ink)}
+ .mtabbar button{flex:1;height:54px;border-radius:18px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;font-size:11px;font-weight:700;color:#A9ABC4;position:relative}
+ .mtabbar button[aria-current=true]{background:var(--butter);color:var(--ink)}
+ .mtabbar em{position:absolute;top:2px;right:16%;min-width:18px;height:18px;padding:0 4px;border-radius:9px;background:var(--tang);color:var(--ink);font:800 10px/18px var(--body);text-align:center;font-style:normal}
+ .app>.pane-l,.app>.thread,.app>.panel,.app>.page{grid-column:1;grid-row:1}
+ .app[data-m=list]>.thread,.app[data-m=list]>.panel{display:none}
+ .app[data-m=thread]>.pane-l,.app[data-m=thread]>.panel{display:none}
+ .app[data-m=thread]{grid-template-rows:minmax(0,1fr)}
+ .app[data-m=thread] .mtabbar{display:none}
+ .app[data-m=detail]>.pane-l,.app[data-m=detail]>.thread{display:none}
+ .app[data-m=detail]{grid-template-rows:minmax(0,1fr)}.app[data-m=detail] .mtabbar{display:none}
+ .app>.mtabbar{grid-column:1;grid-row:2}
+ .pane-l{border-right:0}.ph{padding:22px 18px 10px}.ph h1{font-size:44px}.strip{padding:6px 18px 12px}
+ .back{display:grid}
+ .th{padding:12px 12px}.th h2{font-size:22px}.msgs{padding:16px 14px 8px}.m{max-width:88%}.composer{margin:6px 12px 12px}
+ .panel{border-left:0}
+ .page{padding:22px 18px 32px}.page>h1{font-size:52px}.tiles{grid-template-columns:1fr}.grid2{grid-template-columns:1fr}
+ .tile b{font-size:52px}
+ .th .hide-n{display:none}
+}
+</style>
+<style>
+.flow{stroke-dasharray:6 8;animation:fl 1.2s linear infinite}@keyframes fl{to{stroke-dashoffset:-14}}
+@media (prefers-reduced-motion:reduce){.flow,.marq>div,.radar .sweep,.typing i{animation:none}}
+</style>
+<div id="ground"><div id="frame"><div id="stage" style="height:100%"></div><div id="overlay"></div><div id="toast" role="status"></div></div></div>
+<div class="switch" role="group" aria-label="Preview size"><button id="sw-d" aria-pressed="true" data-a="dev" data-v="desktop">Desktop</button><button id="sw-p" aria-pressed="false" data-a="dev" data-v="phone">Phone</button></div>
+<script>
+(function(){
+'use strict';
+var $=function(s,r){return (r||document).querySelector(s)};
+var esc=function(s){return String(s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})};
+var IC={
+send:'<path d="M12 19V5M5 12l7-7 7 7"/>',back:'<path d="M15 5l-7 7 7 7"/>',arrow:'<path d="M5 12h14M13 6l6 6-6 6"/>',search:'<circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/>',
+lock:'<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>',key:'<circle cx="8" cy="15" r="4"/><path d="M11 12l9-9M16 7l3 3"/>',
+wifi:'<path d="M2 9a15 15 0 0 1 20 0M5.5 12.5a10 10 0 0 1 13 0M9 16a5 5 0 0 1 6 0"/><circle cx="12" cy="19.5" r="1" fill="currentColor"/>',
+users:'<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.6-3.4 3.2-5.5 6.5-5.5s5.9 2.1 6.5 5.5"/><path d="M16 4.6a3.5 3.5 0 0 1 0 6.8M18 14.9c1.9.7 3.2 2.4 3.6 5.1"/>',
+chat:'<path d="M4 5h16v11H9l-5 4z"/>',gear:'<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/>',
+shield:'<path d="M12 3l8 3v6c0 4.5-3.3 8-8 9-4.7-1-8-4.5-8-9V6z"/><path d="M8.5 12l2.5 2.5 4.5-5"/>',check:'<path d="M5 12.5l4.5 4.5L19 7.5"/>',checks:'<path d="M2 12.5l4.5 4.5L16 7.5M11 16.5l1 .5L23 7.5"/>',
+plus:'<path d="M12 5v14M5 12h14"/>',file:'<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/>',image:'<rect x="3" y="4" width="18" height="16" rx="3"/><circle cx="9" cy="10" r="1.6"/><path d="M4 18l5-5 4 4 3-3 4 4"/>',
+clip:'<path d="M20 11l-8 8a5 5 0 0 1-7-7l9-9a3.5 3.5 0 0 1 5 5l-9 9a2 2 0 0 1-3-3l8-8"/>',qr:'<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M14 14h3v3h-3zM14 20h3M20 17v4"/>',
+x:'<path d="M6 6l12 12M18 6L6 18"/>',bell:'<path d="M6 16V11a6 6 0 0 1 12 0v5l2 2H4z"/><path d="M10 21h4"/>',radar:'<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1" fill="currentColor"/><path d="M12 12l6-6"/>',
+clock:'<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',reply:'<path d="M10 8L4 13l6 5V14c5 0 8 1 10 5-1-6-4-9-10-9z"/>',refresh:'<path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5"/>',trash:'<path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/>',warn:'<path d="M12 3l10 18H2z"/><path d="M12 10v5M12 18v.01"/>',
+info:'<circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8v.01"/>',panel:'<rect x="3" y="4" width="18" height="16" rx="3"/><path d="M15 4v16"/>',copy:'<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h9"/>',
+laptop:'<rect x="4" y="5" width="16" height="11" rx="2"/><path d="M2 19h20"/>',phone:'<rect x="7" y="2.5" width="10" height="19" rx="2.5"/><path d="M11 18.5h2"/>',globe:'<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18"/>',
+cloud:'<path d="M7 18a4 4 0 0 1-.5-8A6 6 0 0 1 18 9.5 4.3 4.3 0 0 1 17.5 18z"/>',eye:'<path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',download:'<path d="M12 4v11M7 11l5 5 5-5M5 20h14"/>'
+};
+function I(n,s,w){s=s||20;return '<svg width="'+s+'" height="'+s+'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="'+(w||2)+'" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+IC[n]+'</svg>'}
+var LOGO='<svg width="26" height="26" viewBox="0 0 32 32" fill="none" stroke="#0C0C14" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M8 21c0-5.5 3.3-9.5 8.5-9.5 3.2 0 5.5 2 5.5 4.5s-1.3 3.5-3.4 3.5c-1.2 0-2.2-.7-2.2-1.8M22.5 15.5l3.5-1-2.2 3.5"/></svg>';
+var WORDS=['feather','galaxy','nova','cider','mint','topaz','harbor','walrus','satin','chalk','kite','jasper','lantern','orbit','pepper','quartz','ripple','saffron','tundra','velvet','willow','yonder','zephyr','amber'];
+function hash(s){var h=2166136261;for(var i=0;i<s.length;i++){h^=s.charCodeAt(i);h=Math.imul(h,16777619)}return h>>>0}
+function fpOf(seed){var out=[],h=hash(seed);for(var i=0;i<8;i++){h=Math.imul(h^(h>>>13),1274126177)>>>0;out.push(('0000'+(h&0xffff).toString(16)).slice(-4).toUpperCase())}return out}
+function wordsOf(seed){var h=hash(seed+'w'),o=[];for(var i=0;i<6;i++){h=Math.imul(h^(h>>>15),2246822519)>>>0;o.push(WORDS[h%WORDS.length])}return o}
+function identicon(seed,size,fg,bg){var h=hash(seed),c='';for(var r=0;r<5;r++)for(var k=0;k<5;k++){var col=k<3?k:4-k;c+='<i style="border-radius:3px;background:'+(((h>>>(r*3+col))&1)?fg:'transparent')+'"></i>'}
+return '<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:4px;width:'+size+'px;height:'+size+'px;padding:'+Math.round(size*.13)+'px;border-radius:'+Math.round(size*.3)+'px;background:'+bg+';flex:none">'+c+'</div>'}
+function nowT(){var d=new Date();return ('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2)}
+
+/* ---------------- data ---------------- */
+var PEERS={
+ alex:{id:'alex',name:'Alex Rivera',ini:'AR',bg:'var(--cobalt)',fg:'#fff',trust:'verified',online:true,nearby:true,fp:['4F2A','91C8','E03B','7D15','A6C2','0F94','B81E','33D7'],dev:'MacBook Pro'},
+ sam:{id:'sam',name:'Sam Okafor',ini:'SO',bg:'var(--butter)',fg:'var(--ink)',trust:'new',online:true,nearby:true,fp:['7C3E','09B1','F2A4','55D8','1E90','C7A3','6B2F','D414'],dev:'Sam’s Laptop'},
+ dana:{id:'dana',name:'Dana Kim',ini:'DK',bg:'var(--tang)',fg:'var(--ink)',trust:'changed',online:true,nearby:true,fp:['B7E1','20D4','5A9C','F108','C43E','77B2','19AD','E6F0'],newfp:['B7E1','20D4','8C31','2FE7','C43E','A0D9','19AD','4B6C'],dev:'ThinkPad'},
+ priya:{id:'priya',name:'Priya N.',ini:'PN',bg:'var(--pink)',fg:'var(--ink)',trust:'verified',online:false,nearby:false,fp:['D902','3AE7','16BC','80F4','2D5E','B9A1','C770','04EE'],dev:'Pixel 9'},
+ jonas:{id:'jonas',name:'Jonas’s iPad',ini:'JI',bg:'var(--lilac)',fg:'var(--ink)',trust:'unknown',online:false,nearby:false,hidden:true,fp:['1AB4','C09E','77D3','2E58','F6A1','93C0','5B27','E8D4'],dev:'iPad Air'}
+};
+var PEER_ORDER=['alex','sam','dana','priya','jonas'];
+var MSG={
+ alex:[{f:'alex',t:'You on the same Wi-Fi? I can see you in Nearby.',ts:'14:02'},{f:'me',t:'Yep, connected. No server involved, which is the point.',ts:'14:03',s:'delivered'},{f:'alex',k:'photo',ts:'14:04'},{f:'alex',t:'Whiteboard from the workshop.',ts:'14:04'},{f:'me',k:'file',name:'chirp-spec-v2.pdf',size:'248 KB',ts:'14:05',s:'delivered'},{f:'alex',t:'Sounds good, see you at 3.',ts:'14:06'}],
+ sam:[],
+ dana:[{f:'dana',t:'Ping me when the build finishes.',ts:'Yesterday'}],
+ priya:[{f:'priya',t:'Are you around later?',ts:'13:41'},{f:'me',t:'Send me the notes when you’re back on.',ts:'13:49',s:'delivered'},{f:'me',t:'Also, the build passed.',ts:'13:52',s:'queued'}],
+ jonas:[]
+};
+var REPLIES={alex:['Nice. That works on my end too.','Ha, exactly.','Sending you the diagram in a sec.','Can you check the fingerprint again later?'],sam:['Got it.','Makes sense.','Cool, thanks for verifying me.'],priya:['Back online. Got everything.','Thanks, reading now.','Ha, perfect timing.'],jonas:['Hi! Just joined the Wi-Fi.'],dana:['']};
+var ROOMS={
+ crit:{id:'crit',name:'Design crit',ini:'DC',bg:'var(--tang)',members:['alex','sam','priya'],msgs:[
+  {f:'alex',t:'Landing draft is up. Thoughts on the hero?',ts:'11:20',r:{Yes:['sam']}},
+  {f:'sam',t:'Type is loud in the best way.',ts:'11:22',r:{Nice:['alex','priya']}},
+  {f:'me',t:'Shipping the key ceremony screens next.',ts:'11:30',r:{}},
+  {f:'priya',t:'Can we test it on the guest Wi-Fi?',ts:'11:41',r:{}}]},
+ lunch:{id:'lunch',name:'Lunch',ini:'LU',bg:'var(--butter)',members:['sam','alex'],msgs:[{f:'sam',t:'Noodles at 1?',ts:'10:02',r:{}},{f:'alex',t:'In.',ts:'10:03',r:{Yes:['sam']}}]}
+};
+var LOG=[];
+function log(msg,kind){LOG.push({t:new Date().toTimeString().slice(0,8),m:msg,k:kind||''});if(LOG.length>60)LOG.shift()}
+log('announce _chirp._tcp on en0');log('found Alex Rivera 192.168.1.18','ok');log('noise xx ok · key matches pin','ok');log('found Sam’s Laptop · new key');log('Dana Kim key differs from pin','bad');
+var S={view:'landing',step:0,name:'',gen:0,pass:'',perm:{notif:true},tab:'chats',cur:'alex',room:'crit',m:'list',panel:true,dtab:'trust',modal:null,pal:false,q:'',palq:'',typing:null,draft:{},settings:{notif:true,previews:false,lock:false,keep:'7 days'},restored:false,file:false,phone:false,backupDone:false,offline:false,hs:null,hsStep:0,mi:0};
+
+/* ---------------- helpers ---------------- */
+function av(p,size,pres){var fs=Math.round(size*.36);return '<span class="av" style="width:'+size+'px;height:'+size+'px;font-size:'+fs+'px"><b style="border-radius:'+Math.round(size*.34)+'px;background:'+p.bg+';color:'+p.fg+'">'+p.ini+'</b>'+(pres===false?'':'<i class="'+(p.online?'on':p.nearby?'wait':'')+'"></i>')+'</span>'}
+function meP(){return {ini:(S.name||'You').trim().split(/\s+/).map(function(w){return w[0]}).slice(0,2).join('').toUpperCase()||'Y',bg:'var(--ink)',fg:'var(--butter)',online:true}}
+function chipFor(p){return p.trust==='verified'?'<span class="chip ok">'+I('shield',13,2.4)+'Verified</span>':p.trust==='changed'?'<span class="chip bad">'+I('warn',13,2.4)+'Key changed</span>':p.trust==='new'?'<span class="chip warn">Unverified</span>':'<span class="chip dim">Nearby</span>'}
+function toast(m,bad){var t=$('#toast');t.textContent=m;t.className='on'+(bad?' bad':'');clearTimeout(toast.t);toast.t=setTimeout(function(){t.className=''},2600)}
+function visiblePeers(){return PEER_ORDER.map(function(k){return PEERS[k]}).filter(function(p){return !p.hidden})}
+function queued(){var o=[];Object.keys(MSG).forEach(function(k){MSG[k].forEach(function(m,i){if(m.s==='queued')o.push({peer:k,m:m,i:i})})});return o}
+var unread={sam:1};
+function unreadTotal(){return Object.keys(unread).reduce(function(a,k){return a+unread[k]},0)}
+function lastOf(p){var l=MSG[p.id];return l.length?l[l.length-1]:null}
+function preview(p){
+ if(p.trust==='changed')return{t:'Key changed · chat blocked',w:1};
+ if(p.trust==='new'&&!MSG[p.id].length)return{t:'New device · not verified',w:1};
+ if(p.trust==='unknown')return{t:'Connecting securely…'};
+ var l=lastOf(p);if(!l)return{t:'No messages yet'};
+ var body=l.k==='photo'?'Photo':l.k==='file'?l.name:l.t;
+ if(l.f!=='me'&&!S.settings.previews)body='New message';
+ return{t:(l.f==='me'?'You: ':'')+body+(p.online?'':'')}
+}
+
+/* ---------------- landing ---------------- */
+function landing(){
+var mq=['No server','No account','No cloud','End to end','Same Wi-Fi','Noise XX','Yours alone'];var mqh='';for(var r=0;r<2;r++){mq.forEach(function(w){mqh+='<span>'+w+'</span><span class="s">/</span>'})}
+var faqs=[
+['Does it work over the internet?','No, and that is the design. Chirp talks between devices that share a network: your office Wi-Fi, a home router, a hotspot. Nothing leaves the LAN.'],
+['How do I know I am talking to the right person?','Encryption alone can’t tell you whose key it is. Chirp pins the first key it sees for a name, flags any later change, and lets you compare a 16-group fingerprint or six words in person to mark someone verified.'],
+['Why can’t I see anyone on guest Wi-Fi?','Many guest networks isolate clients and drop multicast. If devices can’t see each other on that network, Chirp can’t either. The Network screen lists the usual causes.'],
+['Are my messages encrypted on disk?','Not yet. They travel encrypted and are stored in a local file with restricted permissions. Encrypted-at-rest storage is on the roadmap. Treat an unencrypted disk backup as readable.'],
+['What happens if we both pick the same name?','The name is the handle, so two people with the same name collide and one appears as a key change. There is no rename yet.']];
+var fq='';faqs.forEach(function(f,i){fq+='<div class="q'+(i===0?' open':'')+'"><button data-a="faq" aria-expanded="'+(i===0)+'"><span>'+esc(f[0])+'</span>'+I('plus',30,2.4)+'</button><div class="a">'+esc(f[1])+'</div></div>'});
+return '<div class="landing" id="land">'+
+'<div class="nav"><div class="logo"><span>'+LOGO+'</span>chirp</div><div class="links row" style="gap:28px;margin-left:24px"><a data-a="scroll" data-t="how">How it works</a><a data-a="scroll" data-t="trust">Trust</a><a data-a="scroll" data-t="faq">FAQ</a></div><button class="btn tang sm" data-a="onboard" style="margin-left:auto">Open prototype</button></div>'+
+'<section class="hero"><div><div class="eyebrow" style="margin-bottom:22px">Messaging for the people on your Wi-Fi</div><h1>Talk to the <mark>room</mark> you’re standing in.</h1><p class="lead">Chirp finds the people on your network and talks to them directly. No server in the middle, no account to make, nothing to sign in to.</p><div class="row" style="gap:14px;flex-wrap:wrap"><button class="btn tang" data-a="onboard">Try the prototype '+I('arrow',20,2.4)+'</button><button class="btn ghost" data-a="scroll" data-t="how">How it works</button></div></div>'+
+'<div class="stackcards"><div class="sc-phone"><div class="row" style="gap:10px;margin-bottom:6px"><span class="av" style="width:40px;height:40px;font-size:14px"><b style="border-radius:14px;background:var(--butter);color:var(--ink)">AR</b></span><div><div style="font:800 17px var(--display);color:#fff;letter-spacing:-.03em">Alex Rivera</div><div class="mono" style="font-size:11px;color:#C9CDFF">online · 192.168.1.18</div></div></div><div class="b t">You on the same Wi-Fi?</div><div class="b m">Yep. No server involved, which is the point.</div><div class="b t">Sounds good, see you at 3.</div><div class="b m">Bringing the cables.</div><div style="margin-top:auto;height:48px;border-radius:24px;background:rgba(255,255,255,.18);border:2px solid rgba(255,255,255,.5)"></div></div>'+
+'<div class="float" style="left:-6px;top:70px;transform:rotate(-4deg)"><span class="chip ok">'+I('shield',13,2.4)+'Verified</span>fingerprint matches</div>'+
+'<div class="float" style="left:10px;bottom:120px;background:var(--butter);transform:rotate(3deg)">'+I('checks',20,2.4)+'Delivered</div>'+
+'<div class="float" style="right:0;bottom:24px;background:var(--ink);color:var(--butter);transform:rotate(-2deg)"><span class="mono" style="font-weight:500;font-size:13px">Noise_XX_25519_ChaChaPoly</span></div></div></section>'+
+'<div class="marq" aria-hidden="true"><div>'+mqh+'</div></div>'+
+'<section class="sec" id="how"><div class="eyebrow" style="margin-bottom:18px">What happens when you open it</div><h2>Three things happen. None of them touch the internet.</h2><div class="steps">'+
+'<div class="step" style="background:var(--butter)"><div class="n">1</div><h3>Announce</h3><p>Your device advertises itself on the local network with mDNS as <code>_chirp._tcp</code>, carrying your name and key fingerprint. Others’ devices do the same.</p></div>'+
+'<div class="step" style="background:var(--tang)"><div class="n">2</div><h3>Handshake</h3><p>The lower fingerprint dials. Both sides run a three-message Noise XX handshake and prove they hold their private keys. Neither key is sent in the clear.</p></div>'+
+'<div class="step" style="background:var(--cobalt);color:#fff"><div class="n">3</div><h3>Talk</h3><p>Messages go device to device. Each one is written to a local outbox first, retried with backoff and acknowledged only once the other side has saved it.</p></div></div></section>'+
+'<section class="sec dark"><div class="meshwrap"><div><div class="eyebrow" style="color:var(--butter);margin-bottom:18px">Topology</div><h2>Your Wi-Fi is the whole network.</h2><div class="facts"><div><b>0</b><span>servers between you and them. There is nothing to breach, subpoena or switch off.</span></div><div><b>3</b><span>handshake messages establish an encrypted session in both directions.</span></div><div><b>0</b><span>accounts. Your identity is a key that lives on your device.</span></div></div></div>'+
+'<svg viewBox="0 0 600 520" role="img" aria-label="Devices connected directly to each other on one Wi-Fi network, with the cloud crossed out" style="width:100%;height:auto"><ellipse cx="300" cy="290" rx="285" ry="215" fill="none" stroke="#FFD84A" stroke-width="2" stroke-dasharray="4 8"/><text x="300" y="62" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="13" fill="#FFD84A" letter-spacing="2">HOME-WIFI-5G</text>'+
+'<g stroke="#7C7FA6" stroke-width="2" fill="none"><path class="flow" d="M300 290L130 190"/><path class="flow" d="M300 290L470 190"/><path class="flow" d="M300 290L150 420"/><path class="flow" d="M300 290L455 415"/><path class="flow" d="M130 190L150 420"/><path class="flow" d="M470 190L455 415"/></g>'+
+'<g><circle cx="300" cy="290" r="46" fill="#FF5A36"/><text x="300" y="296" text-anchor="middle" font-family="Bricolage Grotesque,sans-serif" font-weight="800" font-size="20" fill="#0C0C14">You</text>'+
+'<circle cx="130" cy="190" r="36" fill="#2A3BFF"/><text x="130" y="196" text-anchor="middle" font-family="Bricolage Grotesque,sans-serif" font-weight="800" font-size="16" fill="#fff">Alex</text>'+
+'<circle cx="470" cy="190" r="36" fill="#FFD84A"/><text x="470" y="196" text-anchor="middle" font-family="Bricolage Grotesque,sans-serif" font-weight="800" font-size="16" fill="#0C0C14">Sam</text>'+
+'<circle cx="150" cy="420" r="36" fill="#FF9EC7"/><text x="150" y="426" text-anchor="middle" font-family="Bricolage Grotesque,sans-serif" font-weight="800" font-size="16" fill="#0C0C14">Priya</text>'+
+'<circle cx="455" cy="415" r="36" fill="#C7B8FF"/><text x="455" y="421" text-anchor="middle" font-family="Bricolage Grotesque,sans-serif" font-weight="800" font-size="16" fill="#0C0C14">Dana</text></g>'+
+'<g transform="translate(520 50)" stroke="#FF8A78" stroke-width="3" fill="none" stroke-linecap="round"><path d="M-30 20a14 14 0 0 1 2-28 20 20 0 0 1 38 4 12 12 0 0 1 0 24z" stroke="#7C7FA6"/><path d="M-28 -10L34 34"/></g><text x="520" y="104" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="12" fill="#FF8A78" letter-spacing="1.5">NO CLOUD</text></svg></div></section>'+
+'<section class="sec" id="trust"><div class="eyebrow" style="margin-bottom:18px">Trust</div><h2>Encryption isn’t trust. Chirp does both.</h2><p style="font-size:19px;max-width:58ch;margin-top:22px">A secure channel proves the key. It can’t tell you whose key it is. So Chirp pins the first key it sees for each name, and shouts when it changes.</p><div class="trustgrid">'+
+'<div class="tcard" style="background:var(--mint)"><div class="row" style="gap:12px"><span class="av" style="width:52px;height:52px;font-size:18px"><b style="border-radius:18px;background:var(--cobalt);color:#fff">AR</b></span><div><div style="font:800 24px var(--display);letter-spacing:-.03em">Alex Rivera</div><span class="chip ink">'+I('shield',13,2.4)+'Verified in person</span></div></div><div class="fp"><span>4F2A</span><span>91C8</span><span>E03B</span><span>7D15</span><span>A6C2</span><span>0F94</span><span>B81E</span><span>33D7</span></div><p>Fingerprint compared face to face. Messages flow.</p></div>'+
+'<div class="tcard" style="background:var(--tang)"><div class="row" style="gap:12px"><span class="av" style="width:52px;height:52px;font-size:18px"><b style="border-radius:18px;background:var(--ink);color:var(--tang)">DK</b></span><div><div style="font:800 24px var(--display);letter-spacing:-.03em">Dana Kim</div><span class="chip bad">'+I('warn',13,2.4)+'Key changed</span></div></div><div class="fp"><span>B7E1</span><span>20D4</span><span class="diff">8C31</span><span class="diff">2FE7</span><span>C43E</span><span class="diff">A0D9</span><span>19AD</span><span class="diff">4B6C</span></div><p>A different key claims this name. Sending is blocked until you review it.</p></div></div></section>'+
+'<section class="sec" style="background:var(--paper2)"><div class="eyebrow" style="margin-bottom:18px">Honest comparison</div><h2>What you give up, and what you get.</h2><div style="overflow-x:auto"><table class="cmp"><thead><tr><th></th><th>Chirp</th><th>Cloud chat</th></tr></thead><tbody>'+
+[['Needs the internet','No','Yes'],['Needs an account','No','Yes'],['A server sees who talks to whom','No server','Yes'],['Works across cities','No','Yes'],['Works on a closed office network','Yes','Depends'],['Verify keys in person','Built in','Rarely']].map(function(r){return '<tr><td style="font-weight:700">'+r[0]+'</td><td class="y">'+r[1]+'</td><td>'+r[2]+'</td></tr>'}).join('')+'</tbody></table></div></section>'+
+'<section class="sec" id="faq"><div class="eyebrow" style="margin-bottom:18px">Questions</div><h2>Things people ask first.</h2><div class="faq">'+fq+'</div></section>'+
+'<section class="cta"><div class="eyebrow" style="color:var(--butter)">Ready when your Wi-Fi is</div><h2>Say hi to the desk next to you.</h2><div class="row" style="gap:14px;flex-wrap:wrap"><button class="btn butter" data-a="onboard">Open the prototype '+I('arrow',20,2.4)+'</button><button class="btn ghostw" data-a="restore">I have a key backup</button></div><div class="code">$ make demo &nbsp;# scripted peers, no network needed</div></section>'+
+'<footer class="foot"><div class="logo" style="font-size:22px"><span style="width:30px;height:30px;border-radius:10px">'+LOGO.replace('width="26" height="26"','width="20" height="20"')+'</span>chirp</div><span style="opacity:.7">Built by Mattathias Abraham · MIT licensed · Not audited, read the limits before relying on it.</span></footer></div>'}
+
+/* ---------------- onboarding ---------------- */
+var OBC=[{bg:'var(--butter)',fg:'var(--ink)',l:'Name'},{bg:'var(--tang)',fg:'var(--ink)',l:'Key'},{bg:'var(--lilac)',fg:'var(--ink)',l:'Backup'},{bg:'var(--mint)',fg:'var(--ink)',l:'Access'}];
+function strength(p){var s=0;if(p.length>=8)s++;if(p.length>=12)s++;if(/[A-Z]/.test(p)&&/[a-z]/.test(p))s++;if(/[0-9]/.test(p)&&/[^A-Za-z0-9]/.test(p))s++;return s}
+var GENLINES=['Generating X25519 keypair','Deriving fingerprint (SHA-256)','Building your six words','Sealing key on this device'];
+function onboard(){
+var c=OBC[S.step],i=S.step,r='';
+var left='<div class="ob-l" style="background:'+c.bg+';color:'+c.fg+'"><div class="row" style="gap:16px;width:100%;justify-content:space-between"><div class="logo" style="cursor:pointer" data-a="landing"><span style="background:var(--ink)">'+LOGO.replace(/#0C0C14/g,'#FFD84A')+'</span>chirp</div><div class="eyebrow obtext">Step '+(i+1)+' of 4</div></div><div class="dots" style="margin-top:28px">'+[0,1,2,3].map(function(k){return '<i class="'+(k<=i?'on':'')+'"></i>'}).join('')+'</div><div class="big">0'+(i+1)+'</div></div>';
+if(i===0){
+ r='<div class="eyebrow">'+c.l+'</div><h1>Pick a name people will recognize.</h1><p class="sub">It’s a label nearby people see. Your real identity is the key we make next.</p><div class="field"><label for="nm">Your name</label><input id="nm" data-in="name" value="'+esc(S.name)+'" maxlength="32" placeholder="e.g. Matty" autocomplete="nickname"></div><div class="row" style="gap:14px;flex-wrap:wrap"><button class="btn tang" data-a="next"'+(S.name.trim()?'':' disabled')+'>Make my key '+I('arrow',20,2.4)+'</button><button class="btn ghost" data-a="restore">I have a backup</button></div>';
+}else if(i===1){
+ var lines=GENLINES.map(function(t,k){return k<S.gen?'<div><span class="ok">✓</span> '+t+'</div>':k===S.gen?'<div>› '+t+'…</div>':''}).join('');
+ var done=S.gen>=GENLINES.length,fp=fpOf(S.name),w=wordsOf(S.name);
+ r='<div class="eyebrow">'+c.l+'</div><h1>'+(done?'This is you.':'Making your key.')+'</h1><p class="sub">'+(done?'This key is your identity. It never leaves this device. Show these to someone in person to prove it’s you.':'Everything happens on this device. Nothing is sent anywhere.')+'</p>'+
+ (done?'<div class="pcard row" style="gap:18px;flex-direction:row;align-items:center;background:var(--white);border:2px solid var(--ink);border-radius:26px;padding:20px">'+identicon(S.name,92,'var(--butter)','var(--ink)')+'<div class="grow"><div class="disp" style="font-size:34px">'+esc(S.name)+'</div><div class="mono" style="font-size:12.5px;color:var(--mute);margin-top:6px">X25519 · Noise XX</div></div></div><div class="fp">'+fp.map(function(x){return '<span>'+x+'</span>'}).join('')+'</div><div class="words">'+w.map(function(x){return '<span>'+x+'</span>'}).join('')+'</div>':'<div class="term">'+lines+'</div>')+
+ '<div class="row" style="gap:14px"><button class="btn tang" data-a="next"'+(done?'':' disabled')+'>Continue '+I('arrow',20,2.4)+'</button><button class="btn ghost" data-a="prev">Back</button></div>';
+}else if(i===2){
+ var s=strength(S.pass),cols=['#E5323B','#FF9B1A','#9BD14A','#1FBF7A'];
+ r='<div class="eyebrow">'+c.l+'</div><h1>Back it up, or lose yourself.</h1><p class="sub">There is no account to recover. Lose this device without a backup and everyone sees a new key and must verify you again.</p><div class="field"><label for="bp">Backup passphrase</label><input id="bp" class="pw" type="password" data-in="pass" value="'+esc(S.pass)+'" placeholder="At least 12 characters" autocomplete="new-password"></div><div class="bars">'+[0,1,2,3].map(function(k){return '<i style="background:'+(k<s?cols[s-1]:'')+'"></i>'}).join('')+'</div><div class="mono" style="font-size:13px;color:var(--mute)">'+(S.pass?['Too short','Weak','Okay','Good','Strong'][s]:'Choose one you will remember. Chirp can’t recover it.')+'</div><div class="row" style="gap:14px;flex-wrap:wrap"><button class="btn tang" data-a="export"'+(S.pass.length>=12?'':' disabled')+'>'+I('download',20,2.4)+'Export encrypted backup</button><button class="btn ghost" data-a="next">'+(S.backupDone?'Continue':'Skip for now')+'</button></div>'+(S.backupDone?'<div class="chip ok" style="align-self:flex-start">'+I('check',13,2.6)+'Backup saved (demo)</div>':'');
+}else{
+ r='<div class="eyebrow">'+c.l+'</div><h1>Two permissions, that’s all.</h1><p class="sub">Chirp works while it’s open. There’s no background service and nothing runs when you close it.</p><div><div class="toggle"><span style="width:46px;height:46px;border-radius:14px;background:var(--cobalt);color:#fff;display:grid;place-items:center">'+I('wifi',22)+'</span><div class="grow"><div class="t">Local network</div><div class="n">Required to find people on this Wi-Fi.</div></div><button class="sw" role="switch" aria-checked="true" aria-label="Local network" disabled></button></div><div class="toggle" style="border:0"><span style="width:46px;height:46px;border-radius:14px;background:var(--butter);display:grid;place-items:center">'+I('bell',22)+'</span><div class="grow"><div class="t">Notifications</div><div class="n">A quiet alert while the app is in the background tab.</div></div><button class="sw" role="switch" aria-checked="'+S.perm.notif+'" aria-label="Notifications" data-a="permn"></button></div></div><div class="row" style="gap:14px"><button class="btn tang" data-a="enter">Enter Chirp '+I('arrow',20,2.4)+'</button><button class="btn ghost" data-a="prev">Back</button></div>';
+}
+return '<div class="ob">'+left+'<div class="ob-r">'+r+'</div></div>'}
+function restore(){
+return '<div class="ob"><div class="ob-l" style="background:var(--lilac)"><div class="logo" style="cursor:pointer" data-a="landing"><span style="background:var(--ink)">'+LOGO.replace(/#0C0C14/g,'#FFD84A')+'</span>chirp</div><div class="big" style="font-size:clamp(90px,15cqw,240px)">Back.</div></div><div class="ob-r"><div class="eyebrow">Restore</div><h1>Welcome back. Bring your key.</h1><p class="sub">Restoring on a new device keeps your fingerprint, so people you’ve verified stay verified.</p><button class="btn soft" data-a="pickfile" style="justify-content:flex-start;height:64px;border:2px dashed var(--ink);border-radius:18px;background:'+(S.file?'var(--mint)':'var(--white)')+'">'+I('file',22)+(S.file?'chirp-key-backup.json':'Choose backup file')+'</button><div class="field"><label for="rp">Backup passphrase</label><input id="rp" class="pw" type="password" data-in="pass" value="'+esc(S.pass)+'" placeholder="Passphrase"></div><div class="row" style="gap:14px;flex-wrap:wrap"><button class="btn tang" data-a="dorestore"'+(S.file&&S.pass?'':' disabled')+'>Restore my key</button><button class="btn ghost" data-a="onboard">Start fresh instead</button></div></div></div>'}
+
+/* ---------------- app ---------------- */
+function rail(){
+ var items=[['chats','chat','Chats',unreadTotal()],['rooms','users','Rooms',0],['nearby','radar','Nearby',0],['network','wifi','Network',queued().length],['settings','gear','Settings',0]];
+ return '<nav class="rail" aria-label="Sections"><div class="lg" title="Chirp">'+LOGO+'</div>'+items.map(function(x){return '<button class="rb" data-a="tab" data-v="'+x[0]+'" aria-label="'+x[2]+'" title="'+x[2]+'" aria-current="'+(S.tab===x[0])+'">'+I(x[1],24)+(x[3]?'<em>'+x[3]+'</em>':'')+'</button>'}).join('')+'<span class="sp"></span><button class="rb" data-a="pal" aria-label="Search" title="Search">'+I('search',24)+'</button><button class="rb" data-a="tab" data-v="settings" aria-label="My identity" title="My identity">'+av(meP(),40,false)+'</button></nav>'}
+function mtab(){
+ var items=[['chats','chat','Chats',unreadTotal()],['rooms','users','Rooms',0],['nearby','radar','Nearby',0],['network','wifi','Network',queued().length],['settings','gear','You',0]];
+ return '<div class="mtabbar">'+items.map(function(x){return '<button data-a="tab" data-v="'+x[0]+'" aria-current="'+(S.tab===x[0])+'">'+I(x[1],22)+x[2]+(x[3]?'<em>'+x[3]+'</em>':'')+'</button>'}).join('')+'</div>'}
+function chatItem(p){
+ var pv=preview(p),l=lastOf(p),un=unread[p.id]||0,q=MSG[p.id].filter(function(m){return m.s==='queued'}).length;
+ return '<button class="item" data-a="open" data-v="'+p.id+'" aria-current="'+(S.tab==='chats'&&S.cur===p.id)+'">'+av(p,54)+'<span class="grow"><span class="nm">'+esc(p.name)+(p.trust==='verified'?'<span style="color:#0B7A4B;display:inline-flex">'+I('shield',16,2.4)+'</span>':'')+'</span><span class="pv'+(pv.w?' w':'')+'" style="display:block">'+esc(pv.t)+'</span></span><span class="mt">'+(l?l.ts:'')+(un?'<span class="badge">'+un+'</span>':q?'<span class="chip warn" style="height:22px;padding:0 8px">'+I('clock',12,2.4)+q+'</span>':'')+'</span></button>'}
+function listPane(){
+ var needle=(S.q||'').toLowerCase(),vis=visiblePeers().filter(function(p){return !needle||p.name.toLowerCase().indexOf(needle)>-1||(p.dev||'').toLowerCase().indexOf(needle)>-1});
+ if(S.tab==='rooms'){
+  var rs=Object.keys(ROOMS).map(function(k){return ROOMS[k]});
+  return '<div class="pane-l"><div class="ph"><div class="row" style="gap:12px"><h1>Rooms</h1><span class="chip road">Design preview</span></div><button class="search" data-a="pal">'+I('search',18)+'Search</button></div><div class="list">'+rs.map(function(rm){var l=rm.msgs[rm.msgs.length-1],w=l.f==='me'?'You':PEERS[l.f].name.split(' ')[0];return '<button class="item" data-a="openroom" data-v="'+rm.id+'" aria-current="'+(S.tab==='rooms'&&S.room===rm.id)+'"><span class="av" style="width:54px;height:54px;font-size:19px"><b style="border-radius:18px;background:'+rm.bg+';color:var(--ink)">'+rm.ini+'</b></span><span class="grow"><span class="nm">'+esc(rm.name)+'</span><span class="pv" style="display:block">'+esc(w)+': '+esc(l.t)+'</span></span><span class="mt">'+l.ts+'</span></button>'}).join('')+'<div class="sect">Members online</div><div class="strip" style="padding:0 12px 12px">'+visiblePeers().filter(function(p){return p.online}).map(function(p){return '<button data-a="open" data-v="'+p.id+'">'+av(p,52)+p.name.split(' ')[0]+'</button>'}).join('')+'</div></div></div>'}
+ var online=vis.filter(function(p){return p.online&&p.trust!=='unknown'});
+ var attention=vis.filter(function(p){return (p.trust==='changed'||(p.trust==='new'))});
+ var rest=vis.filter(function(p){return p.trust==='verified'});
+ var nearby=vis.filter(function(p){return p.trust==='unknown'});
+ return '<div class="pane-l"><div class="ph"><div class="row" style="gap:12px"><h1>Chats</h1><span class="grow"></span><button class="ib dark" data-a="pal" aria-label="Search everything">'+I('search',20)+'</button></div><div class="search" style="cursor:text"><span>'+I('search',18)+'</span><input id="qf" data-in="q" value="'+esc(S.q)+'" placeholder="Filter people" style="flex:1;min-width:0;border:0;outline:0;background:transparent;font-weight:600" aria-label="Filter people"></div></div>'+
+ (online.length&&!needle?'<div class="strip" aria-label="Online now">'+online.map(function(p){return '<button data-a="open" data-v="'+p.id+'" aria-label="Open chat with '+esc(p.name)+'">'+av(p,58)+p.name.split(' ')[0]+'</button>'}).join('')+'</div>':'')+
+ '<div class="list">'+(attention.length?'<div class="sect">'+I('warn',14,2.4)+'Needs attention</div>'+attention.map(chatItem).join(''):'')+(rest.length?'<div class="sect">People</div>'+rest.map(chatItem).join(''):'')+(nearby.length?'<div class="sect">Nearby</div>'+nearby.map(chatItem).join(''):'')+(!vis.length?'<div style="padding:40px 20px;text-align:center;color:var(--mute)"><div class="disp" style="font-size:34px;color:var(--ink);margin-bottom:8px">No one matches.</div>Try another name.</div>':'')+'</div></div>'}
+
+function msgHTML(m,p,i){
+ var mine=m.f==='me',body;
+ if(m.k==='photo')body='<div class="photo"><svg viewBox="0 0 260 180" width="260" height="180" aria-label="Photo: whiteboard sketch"><rect width="260" height="180" fill="#FFD84A"/><path d="M0 130 90 70l60 44 40-28 70 50v44H0z" fill="#FF5A36"/><circle cx="196" cy="48" r="20" fill="#2A3BFF"/><path d="M28 30h60M28 46h90M28 62h40" stroke="#0C0C14" stroke-width="5" stroke-linecap="round"/></svg></div>';
+ else if(m.k==='file')body='<div class="filec"><span style="width:46px;height:46px;border-radius:14px;background:var(--butter);border:2px solid var(--ink);display:grid;place-items:center">'+I('file',22)+'</span><div class="grow"><div style="font-weight:800">'+esc(m.name)+'</div><div class="mono" style="font-size:12px;color:var(--mute)">'+m.size+' · sent direct</div></div></div>';
+ else body='<div class="bub">'+esc(m.t)+'</div>';
+ var st='';
+ if(mine){st=m.s==='queued'?'<div class="stat q" title="Waiting for '+esc(p.name)+'">'+I('clock',13,2.4)+'Queued · sends when '+esc(p.name.split(' ')[0])+' is back</div>':m.s==='sent'?'<div class="stat">'+I('check',13,2.4)+m.ts+' · Sent</div>':'<div class="stat ok">'+I('checks',14,2.4)+m.ts+' · Delivered</div>'}
+ else st='<div class="stat">'+m.ts+'</div>';
+ return '<div class="m '+(mine?'me':'th2')+'" data-a="msg" data-i="'+i+'" style="cursor:pointer" title="Click for actions">'+body+st+'</div>'}
+function hsPane(p){
+ var st=[['Found on Wi-Fi','mDNS · 192.168.1.'+(20+hash(p.id)%200)],['Handshake','Noise_XX · e, ee, s, es'],['Pinning key','Trusted on first contact'],['Encrypted session','ChaCha20-Poly1305']];
+ return '<div class="thread"><div class="th"><button class="ib back" data-a="back" aria-label="Back to chats">'+I('back',24)+'</button>'+av(p,52)+'<div class="grow"><h2>'+esc(p.name)+'</h2><div class="st">Connecting…</div></div></div><div class="msgs" style="align-items:center;justify-content:center;gap:22px"><div class="disp" style="font-size:52px;text-align:center">Shaking<br>hands.</div><div class="card" style="width:min(420px,100%)">'+st.map(function(x,j){var done=S.hsStep>j,cur=S.hsStep===j;return '<div class="ob-row" style="border:0;opacity:'+(done||cur?1:.4)+'"><span style="width:40px;height:40px;border-radius:13px;border:2px solid var(--ink);display:grid;place-items:center;background:'+(done?'var(--mint)':cur?'var(--butter)':'var(--paper2)')+'">'+I(done?'check':cur?'clock':'lock',18,2.6)+'</span><div class="grow"><div style="font-weight:800">'+x[0]+'</div><div class="mono" style="font-size:12px;color:var(--mute)">'+x[1]+'</div></div></div>'}).join('')+'</div></div></div>'}
+function threadPane(){
+ var p=PEERS[S.cur];if(!p)return '<div class="thread"></div>';
+ if(S.hs===p.id)return hsPane(p);
+ var status=p.online?'Online · '+p.dev:p.nearby?'Nearby · connecting':'Offline · last seen 13:52';
+ var notice='';
+ if(p.trust==='changed')notice='<div class="banner bad" role="alert">'+I('warn',24)+'<div class="grow"><b>'+esc(p.name)+'’s key changed.</b> Someone else may be using this name, or they reinstalled Chirp. Sending is blocked.</div><button class="btn sm" style="background:#fff;color:var(--ink)" data-a="trust">Review</button></div>';
+ else if(p.trust==='new')notice='<div class="banner warn">'+I('info',24)+'<div class="grow"><b>First contact.</b> Chirp pinned '+esc(p.name)+'’s key on first sight. Compare fingerprints in person.</div><button class="btn sm ink" data-a="trust">Verify</button></div>';
+ if(S.offline)notice='<div class="banner bad" role="alert">'+I('wifi',24)+'<div class="grow"><b>Wi-Fi dropped.</b> Messages are queued and send when you reconnect.</div><button class="btn sm" style="background:#fff;color:var(--ink)" data-a="wifi">Reconnect</button></div>'+notice;
+ var locked=p.trust==='changed'||p.trust==='unknown';
+ var list='<div class="day">Today</div><div class="mono" style="align-self:center;display:flex;gap:6px;align-items:center;font-size:12px;color:var(--mute)">'+I('lock',13,2.4)+'End-to-end encrypted · Noise XX</div>'+(MSG[p.id].length?MSG[p.id].map(function(m,i){return msgHTML(m,p,i)}).join(''):'<div class="mono" style="align-self:center;color:var(--mute);padding:20px">No messages yet. Say hello.</div>')+(S.typing===p.id?'<div class="typing" aria-label="'+esc(p.name)+' is typing"><i></i><i></i><i></i></div>':'');
+ var ph=locked?(p.trust==='changed'?'Review the changed key to continue':'Establishing a secure session…'):p.online?'Message '+p.name.split(' ')[0]:'Message '+p.name.split(' ')[0]+' (queued until they’re back)';
+ return '<div class="thread"><div class="th"><button class="ib back" data-a="back" aria-label="Back to chats">'+I('back',24)+'</button>'+av(p,52)+'<div class="grow"><h2>'+esc(p.name)+'</h2><div class="st'+(p.online?' on':'')+'">'+status+'</div></div><span class="hide-n">'+chipFor(p)+'</span><button class="ib" data-a="panel" aria-label="Trust and shared files" aria-pressed="'+S.panel+'" style="'+(S.panel?'background:var(--butter)':'')+'">'+I('panel',22)+'</button></div>'+notice+'<div class="msgs" role="log" aria-label="Conversation with '+esc(p.name)+'">'+list+'</div>'+composer('c:'+p.id,ph,locked)+'</div>'}
+function composer(key,ph,locked){var v=S.draft[key]||'';return '<div class="composer"><button class="ib" data-a="attach" aria-label="Attach a file" style="width:44px;height:44px">'+I('clip',22)+'</button><textarea id="ta" rows="1" data-in="draft" data-k="'+key+'" placeholder="'+esc(ph)+'" aria-label="Message"'+(locked?' disabled':'')+' maxlength="4000">'+esc(v)+'</textarea><button class="send" data-a="send" aria-label="Send message"'+(locked||!v.trim()?' disabled':'')+'>'+I('send',22,2.6)+'</button></div>'}
+function roomPane(){
+ var rm=ROOMS[S.room];
+ var list='<div class="day">Today</div><div class="mono" style="align-self:center;display:flex;gap:6px;align-items:center;font-size:12px;color:var(--mute)">'+I('lock',13,2.4)+'Each member gets their own encrypted copy</div>'+rm.msgs.map(function(m,i){
+  var mine=m.f==='me',p=mine?null:PEERS[m.f];
+  var rr=Object.keys(m.r||{}).map(function(k){var on=m.r[k].indexOf('me')>-1;return '<button class="'+(on?'me':'')+'" data-a="react" data-v="'+i+'" data-k="'+k+'" aria-pressed="'+on+'">'+k+' '+m.r[k].length+'</button>'}).join('')+'<button data-a="react" data-v="'+i+'" data-k="Nice" aria-label="Add reaction" style="width:30px;padding:0">'+I('plus',14,2.6)+'</button>';
+  return '<div class="m '+(mine?'me':'th2')+'">'+(mine?'':'<div class="who" style="color:'+(m.f==='alex'?'var(--cobalt)':m.f==='sam'?'#8A5A00':'#B0235F')+'">'+esc(p.name)+'</div>')+'<div class="bub">'+esc(m.t)+'</div><div class="reacts" style="'+(mine?'justify-content:flex-end':'')+'">'+rr+'</div><div class="stat">'+m.ts+'</div></div>'}).join('')+(S.typing==='room'?'<div class="typing"><i></i><i></i><i></i></div>':'');
+ return '<div class="thread"><div class="th"><button class="ib back" data-a="back" aria-label="Back">'+I('back',24)+'</button><span class="av" style="width:52px;height:52px;font-size:19px"><b style="border-radius:18px;background:'+rm.bg+'">'+rm.ini+'</b></span><div class="grow"><h2>'+esc(rm.name)+'</h2><div class="st">'+(rm.members.length+1)+' members · '+rm.members.filter(function(k){return PEERS[k].online}).length+' online</div></div><span class="chip road hide-n">Design preview</span><button class="ib" data-a="panel" aria-label="Members" aria-pressed="'+S.panel+'" style="'+(S.panel?'background:var(--butter)':'')+'">'+I('panel',22)+'</button></div><div class="msgs" role="log" aria-label="Room messages">'+list+'</div>'+composer('r:'+rm.id,'Message '+rm.name,false)+'</div>'}
+function panelPane(){
+ if(S.tab==='rooms'){var rm=ROOMS[S.room];return '<aside class="panel"><div class="row" style="justify-content:space-between"><h3>'+esc(rm.name)+'</h3><button class="ib" data-a="panel" aria-label="Close">'+I('x',22)+'</button></div><div class="pcard"><h4>Members</h4>'+[{id:'me'}].concat(rm.members.map(function(k){return {id:k}})).map(function(x){var p=x.id==='me'?meP():PEERS[x.id];return '<div class="row" style="gap:12px">'+av(p,42,x.id!=='me')+'<div class="grow" style="font-weight:800;font-family:var(--display);font-size:17px;letter-spacing:-.02em">'+(x.id==='me'?esc(S.name||'You')+' (you)':esc(p.name))+'</div>'+(x.id==='me'?'':chipFor(p))+'</div>'}).join('')+'</div><div class="pcard"><h4>Note</h4><p style="font-size:14.5px">Rooms are a design preview. The current daemon speaks one-to-one only; rooms would fan out one encrypted copy per member.</p></div></aside>'}
+ var p=PEERS[S.cur];if(!p)return '';
+ var changed=p.trust==='changed';
+ var head='<div class="row" style="justify-content:space-between"><h3>'+(S.dtab==='trust'?'Trust':'Shared')+'</h3><button class="ib" data-a="panel" aria-label="Close panel">'+I('x',22)+'</button></div><div class="tabs2"><button data-a="dtab" data-v="trust" aria-pressed="'+(S.dtab==='trust')+'">Trust</button><button data-a="dtab" data-v="media" aria-pressed="'+(S.dtab==='media')+'">Media & files</button></div>';
+ if(S.dtab==='media'){
+  return '<aside class="panel">'+head+'<div class="row" style="gap:8px"><span class="chip road">Design preview</span></div><div class="pcard"><h4>Photos</h4><div class="media"><div style="background:var(--butter)"><svg viewBox="0 0 100 100" width="100%" height="100%"><path d="M0 75 35 45l25 20 20-14 20 20v29H0z" fill="#FF5A36"/><circle cx="76" cy="26" r="11" fill="#2A3BFF"/></svg></div><div style="background:var(--cobalt)"><svg viewBox="0 0 100 100" width="100%" height="100%"><circle cx="50" cy="50" r="28" fill="#FFD84A"/><circle cx="50" cy="50" r="12" fill="#0C0C14"/></svg></div></div></div><div class="pcard"><h4>Files</h4><div class="row" style="gap:12px"><span style="width:44px;height:44px;border-radius:12px;background:var(--butter);border:2px solid var(--ink);display:grid;place-items:center">'+I('file',20)+'</span><div class="grow"><div style="font-weight:800">chirp-spec-v2.pdf</div><div class="mono" style="font-size:12px;color:var(--mute)">248 KB · Today 14:05</div></div></div></div></aside>'}
+ var bg=changed?'':'';
+ var body;
+ if(changed){body='<div class="pcard" style="background:var(--ink);color:var(--paper);border-color:var(--ink)"><h4 style="color:var(--butter)">New key claiming this name</h4><div class="fp d">'+p.newfp.map(function(x,i){return '<span'+(x!==p.fp[i]?' class="diff"':'')+'>'+x+'</span>'}).join('')+'</div></div><div class="pcard"><h4>Key you pinned before</h4><div class="fp">'+p.fp.map(function(x){return '<span>'+x+'</span>'}).join('')+'</div></div><p style="font-size:15px;font-weight:600">Ask '+esc(p.name.split(' ')[0])+' in person which fingerprint is theirs. Only accept if the new one matches.</p><button class="btn ink" data-a="trust">Review and decide</button>'}
+ else body='<div class="pcard"><h4>Fingerprint</h4><div class="fp">'+p.fp.map(function(x){return '<span>'+x+'</span>'}).join('')+'</div></div><div class="pcard"><h4>Verify with words</h4><div class="words">'+wordsOf(p.id).map(function(x){return '<span>'+x+'</span>'}).join('')+'</div></div>'+(p.trust==='verified'?'<button class="btn soft" data-a="unverify">Remove verified mark</button>':'<button class="btn ink" data-a="trust">'+I('shield',20,2.4)+'Compare and verify</button>');
+ return '<aside class="panel'+(changed?' bad':'')+'">'+head+'<div class="row" style="gap:16px">'+identicon(p.id+p.dev,76,'var(--butter)','var(--ink)')+'<div><div class="disp" style="font-size:28px;letter-spacing:-.04em">'+esc(p.name)+'</div><div style="margin-top:6px">'+chipFor(p)+'</div></div></div>'+body+'<button class="btn ghost" style="border-color:var(--ink)" data-a="forget">Forget this person</button></aside>'}
+
+function nearbyPage(){
+ var pts=[{id:'alex',x:28,y:30},{id:'sam',x:72,y:34},{id:'dana',x:68,y:74},{id:'priya',x:24,y:70,off:1},{id:'jonas',x:50,y:16}];
+ return '<div class="page"><div class="row" style="gap:14px;flex-wrap:wrap"><h1>Nearby</h1><span class="chip ink" style="height:32px"><span style="width:8px;height:8px;border-radius:50%;background:var(--mint)"></span>Scanning Home-WiFi-5G</span></div><div class="grid2"><div class="card c" style="align-items:center"><div class="radar"><div class="ring" style="inset:0"></div><div class="ring" style="inset:18%"></div><div class="ring" style="inset:36%"></div><div class="sweep"></div>'+
+ '<div class="pt" style="left:50%;top:50%"><span class="av" style="width:44px;height:44px;font-size:15px"><b style="border-radius:15px;background:var(--butter);color:var(--ink)">'+meP().ini+'</b></span>You</div>'+
+ pts.filter(function(x){var p=PEERS[x.id];return !p.hidden&&(p.online||p.nearby)}).map(function(x){var p=PEERS[x.id];return '<button class="pt" style="left:'+x.x+'%;top:'+x.y+'%" data-a="open" data-v="'+p.id+'" aria-label="Open chat with '+esc(p.name)+'">'+av(p,46,false)+p.name.split(' ')[0]+'</button>'}).join('')+'</div><p style="font-size:14px;opacity:.85;text-align:center">Peers appear while Chirp is open. Close the app and you disappear.</p></div>'+
+ '<div class="card"><h3>On this network</h3>'+visiblePeers().filter(function(p){return p.online||p.nearby}).map(function(p){return '<div class="ob-row">'+av(p,48)+'<div class="grow"><div style="font:800 18px var(--display);letter-spacing:-.03em">'+esc(p.name)+'</div><div class="mono" style="font-size:12px;color:var(--mute)">'+esc(p.dev)+' · 192.168.1.'+(20+hash(p.id)%200)+'</div></div>'+chipFor(p)+'<button class="btn sm ink" data-a="open" data-v="'+p.id+'">Chat</button></div>'}).join('')+'<div class="row" style="gap:10px;flex-wrap:wrap;margin-top:6px"><button class="btn soft sm" data-a="modal" data-v="invite">'+I('qr',18)+'My invite code</button><button class="btn soft sm" data-a="modal" data-v="addr">'+I('plus',18,2.4)+'Add by address</button></div></div></div></div>'}
+function networkPage(){
+ var q=queued(),online=visiblePeers().filter(function(p){return p.online}).length;
+ return '<div class="page"><div class="row" style="gap:14px;flex-wrap:wrap"><h1>Network</h1></div><div class="tiles"><div class="tile" style="background:var(--butter)"><b>'+visiblePeers().filter(function(p){return p.nearby||p.online}).length+'</b><span>Peers seen</span></div><div class="tile" style="background:var(--mint)"><b>'+online+'</b><span>Live sessions</span></div><div class="tile" style="background:var(--tang)"><b>'+q.length+'</b><span>In outbox</span></div></div>'+
+ '<div class="grid2"><div class="card"><h3>Interfaces</h3><div class="ob-row"><div class="grow"><div style="font-weight:800">Wi-Fi (en0)</div><div class="mono" style="font-size:12px;color:var(--mute)">192.168.1.24</div></div><span class="chip ok">'+I('check',13,2.6)+'Advertised</span></div><div class="ob-row"><div class="grow"><div style="font-weight:800">VPN (utun3)</div><div class="mono" style="font-size:12px;color:var(--mute)">10.8.0.2</div></div><span class="chip dim">Skipped</span></div><p style="font-size:14px;color:var(--mute)">Chirp only advertises on your Wi-Fi so peers never get an address they can’t reach.</p><div class="row" style="gap:10px;flex-wrap:wrap"><button class="btn soft sm" data-a="announce">Announce again</button><button class="btn soft sm" data-a="wifi">'+I('wifi',18)+(S.offline?'Reconnect Wi-Fi':'Simulate Wi-Fi drop')+'</button><button class="btn soft sm" data-a="priyaon"'+(PEERS.priya.online?' disabled':'')+'>Bring Priya online</button></div></div>'+
+ '<div class="card b"><h3>Outbox ('+q.length+')</h3>'+(q.length?q.map(function(o){return '<div class="ob-row" style="border-color:var(--ink)"><div class="grow"><div style="font-weight:700">'+esc(o.m.t)+'</div><div class="mono" style="font-size:12px">To '+esc(PEERS[o.peer].name)+' · 3 attempts</div></div><button class="ib" data-a="retry" aria-label="Retry now">'+I('refresh',20)+'</button><button class="ib" data-a="delq" data-v="'+o.peer+'" data-i="'+o.i+'" aria-label="Delete from outbox">'+I('trash',20)+'</button></div>'}).join(''):'<p>Nothing waiting. Undelivered messages queue here and retry by themselves.</p>')+'</div></div>'+
+ '<div class="card k"><h3>Discovery log</h3><div class="log" role="log">'+LOG.slice().map(function(l){return '<div class="'+l.k+'"><time>'+l.t+'</time>'+esc(l.m)+'</div>'}).join('')+'</div></div></div>'}
+function settingsPage(){
+ var st=S.settings,fp=fpOf(S.name||'You');
+ var sw=function(k,t,n){return '<div class="toggle"><div class="grow"><div class="t">'+t+'</div><div class="n">'+n+'</div></div><button class="sw" role="switch" aria-checked="'+!!st[k]+'" aria-label="'+t+'" data-a="set" data-v="'+k+'"></button></div>'};
+ return '<div class="page"><h1>Settings</h1><div class="card c" style="flex-direction:row;align-items:center;gap:22px;flex-wrap:wrap">'+identicon(S.name||'You',108,'var(--ink)','var(--butter)')+'<div class="grow" style="min-width:220px"><div class="disp" style="font-size:44px">'+esc(S.name||'You')+'</div><div class="mono" style="font-size:12.5px;margin-top:8px;opacity:.85">'+fp.slice(0,4).join(' · ')+' …</div></div><button class="btn butter sm" data-a="modal" data-v="identity">My fingerprint</button></div>'+
+ '<div class="grid2"><div class="card"><h3>Privacy</h3>'+sw('notif','Notifications','A quiet alert while Chirp is open.')+sw('previews','Show message text','Off: alerts and the list say “New message”.')+sw('lock','Lock when it opens','Ask for your device password.')+'</div>'+
+ '<div class="card"><h3>Keep messages for</h3><p style="font-size:14.5px;color:var(--mute)">Older delivered messages are deleted from this device. Unsent messages are never deleted. Others keep their own copy.</p><div class="seg">'+['1 day','7 days','30 days','Forever'].map(function(o){return '<button data-a="keep" data-v="'+o+'" aria-pressed="'+(st.keep===o)+'">'+o+'</button>'}).join('')+'</div></div></div>'+
+ '<div class="grid2"><div class="card b"><h3>Back up your key</h3><p>'+(S.backupDone?'Backed up. Keep the passphrase somewhere safe.':'Not backed up yet. Your key is your identity and there is no account to recover.')+'</p><div><button class="btn ink" data-a="modal" data-v="backup">'+I('key',20,2.4)+'Back up now</button></div></div><div class="card"><h3>Danger zone</h3><p style="font-size:14.5px;color:var(--mute)">Keeps your key and pinned people.</p><div class="row" style="gap:10px;flex-wrap:wrap"><button class="btn red sm" data-a="modal" data-v="wipe">Delete all messages</button><button class="btn soft sm" data-a="landing">Restart prototype</button></div></div></div></div>'}
+
+function emptyNearby(){return '<div class="page"><h1>Nearby</h1><div class="card" style="align-items:center;text-align:center;gap:18px;padding:40px 24px"><span style="width:96px;height:96px;border-radius:30px;background:var(--butter);border:2px solid var(--ink);display:grid;place-items:center">'+I('wifi',48,2.2)+'</span><div class="disp" style="font-size:56px">Nobody here.<br>Yet.</div><p style="max-width:460px;color:var(--mute)">You are not on a Wi-Fi network, so Chirp cannot see anyone. Reconnect, or invite someone with a code.</p><div class="row" style="gap:10px;flex-wrap:wrap;justify-content:center"><button class="btn ink" data-a="wifi">'+I('wifi',20,2.4)+'Reconnect</button><button class="btn ghost" data-a="modal" data-v="invite">'+I('qr',18)+'Invite with a code</button></div></div></div>'}
+function appHTML(){
+ var pageTab=S.tab==='nearby'||S.tab==='network'||S.tab==='settings';
+ var main;
+ if(pageTab)main=(S.tab==='nearby'?(S.offline?emptyNearby():nearbyPage()):S.tab==='network'?networkPage():settingsPage());
+ else main=listPane()+(S.tab==='rooms'?roomPane():threadPane())+(S.panel&&(S.tab==='rooms'||S.cur)?panelPane():'');
+ var m=pageTab?'list':S.m;
+ return '<div class="app'+(pageTab?' wide':S.panel?' p':'')+'" data-m="'+m+'">'+rail()+main+mtab()+'</div>'}
+
+/* ---------------- modals + palette ---------------- */
+function modalHTML(){
+ var k=S.modal;if(!k&&!S.pal)return '';
+ if(S.pal){
+  var q=S.palq.toLowerCase(),res=[];
+  visiblePeers().forEach(function(p){if(!q||p.name.toLowerCase().indexOf(q)>-1)res.push({t:p.name,s:'Person · '+p.trust,a:'open',v:p.id,p:p})});
+  Object.keys(ROOMS).forEach(function(k2){var r=ROOMS[k2];if(!q||r.name.toLowerCase().indexOf(q)>-1)res.push({t:r.name,s:'Room',a:'openroom',v:k2,i:'users'})});
+  if(q.length>1)Object.keys(MSG).forEach(function(pk){MSG[pk].forEach(function(m){if(m.t&&m.t.toLowerCase().indexOf(q)>-1)res.push({t:m.t,s:'Message in '+PEERS[pk].name,a:'open',v:pk,i:'chat'})})});
+  [['Network and outbox','network','wifi'],['Settings','settings','gear'],['Nearby','nearby','radar']].forEach(function(x){if(!q||x[0].toLowerCase().indexOf(q)>-1)res.push({t:'Go to '+x[0],s:'Action',a:'tab',v:x[1],i:x[2]})});
+  return '<div class="scrim" data-a="closepal"><div class="pal" role="dialog" aria-label="Search"><input id="pq" data-in="palq" value="'+esc(S.palq)+'" placeholder="Search people, rooms, messages…" autocomplete="off" aria-label="Search"><div class="res">'+(res.length?res.slice(0,9).map(function(r){return '<button data-a="palgo" data-pa="'+r.a+'" data-v="'+esc(r.v)+'">'+(r.p?av(r.p,40,false):'<span style="width:40px;height:40px;border-radius:13px;background:var(--ink);color:var(--butter);display:grid;place-items:center">'+I(r.i,20)+'</span>')+'<span class="grow"><span style="display:block;font:800 17px var(--display);letter-spacing:-.02em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(r.t)+'</span><span class="mono" style="font-size:12px;color:var(--mute)">'+esc(r.s)+'</span></span></button>'}).join(''):'<div style="padding:28px;text-align:center;color:var(--mute)">Nothing found.</div>')+'</div></div></div>'}
+ var p=PEERS[S.cur],h='';
+ if(k==='trust'&&p){
+  var ch=p.trust==='changed';
+  h='<div class="row" style="justify-content:space-between"><h2>'+(ch?'Key changed.':p.trust==='verified'?'Verified.':'Compare in person.')+'</h2><button class="ib" data-a="closem" aria-label="Close">'+I('x',22)+'</button></div><div class="row" style="gap:14px">'+av(p,64,false)+'<div><div class="disp" style="font-size:28px">'+esc(p.name)+'</div><div style="margin-top:6px">'+chipFor(p)+'</div></div></div>'+
+  (ch?'<div class="pcard" style="background:var(--ink);color:var(--paper)"><h4 style="color:var(--butter)">New key</h4><div class="fp d">'+p.newfp.map(function(x,i){return '<span'+(x!==p.fp[i]?' class="diff"':'')+'>'+x+'</span>'}).join('')+'</div></div><div class="pcard"><h4>Pinned key</h4><div class="fp">'+p.fp.map(function(x){return '<span>'+x+'</span>'}).join('')+'</div></div><p style="font-weight:600">Only accept if '+esc(p.name.split(' ')[0])+' confirms the new fingerprint in person. You’ll need to verify again afterwards.</p><div class="row" style="gap:12px;flex-wrap:wrap"><button class="btn tang" data-a="acceptkey">Trust the new key</button><button class="btn ghost" data-a="closem">Keep blocked</button></div>'
+  :'<div class="pcard"><h4>Fingerprint</h4><div class="fp">'+p.fp.map(function(x){return '<span>'+x+'</span>'}).join('')+'</div></div><div class="pcard"><h4>Or compare six words</h4><div class="words">'+wordsOf(p.id).map(function(x){return '<span>'+x+'</span>'}).join('')+'</div></div><p style="font-size:14.5px;color:var(--mute)">On '+esc(p.name.split(' ')[0])+'’s device, open My fingerprint. If the groups match what you see here, nobody is in the middle.</p><div class="row" style="gap:12px;flex-wrap:wrap">'+(p.trust==='verified'?'<button class="btn soft" data-a="unverify">Remove verified mark</button>':'<button class="btn tang" data-a="verify">'+I('shield',20,2.4)+'They match. Mark verified</button>')+'<button class="btn ghost" data-a="closem">Not now</button></div>')}
+ else if(k==='identity'){var fp=fpOf(S.name||'You');h='<div class="row" style="justify-content:space-between"><h2>My fingerprint.</h2><button class="ib" data-a="closem" aria-label="Close">'+I('x',22)+'</button></div><div class="row" style="gap:14px">'+identicon(S.name||'You',72,'var(--butter)','var(--ink)')+'<div class="disp" style="font-size:28px">'+esc(S.name||'You')+'</div></div><div class="pcard"><h4>Fingerprint</h4><div class="fp">'+fp.map(function(x){return '<span>'+x+'</span>'}).join('')+'</div></div><div class="pcard"><h4>My words</h4><div class="words">'+wordsOf(S.name||'You').map(function(x){return '<span>'+x+'</span>'}).join('')+'</div></div><button class="btn ink" data-a="copyfp">'+I('copy',18)+'Copy full fingerprint</button>'}
+ else if(k==='backup'){var s=strength(S.pass);h='<div class="row" style="justify-content:space-between"><h2>Back up your key.</h2><button class="ib" data-a="closem" aria-label="Close">'+I('x',22)+'</button></div><div class="banner warn" style="border:2px solid var(--ink);border-radius:20px">'+I('key',24)+'<div class="grow">Chirp can’t recover a forgotten passphrase. Store it somewhere safe.</div></div><div class="field"><label for="bp2">Backup passphrase</label><input id="bp2" class="pw" type="password" data-in="pass" value="'+esc(S.pass)+'" placeholder="At least 12 characters"></div><div class="bars">'+[0,1,2,3].map(function(j){return '<i style="background:'+(j<s?['#E5323B','#FF9B1A','#9BD14A','#1FBF7A'][s-1]:'')+'"></i>'}).join('')+'</div><button class="btn tang" data-a="export"'+(S.pass.length>=12?'':' disabled')+'>'+I('download',20,2.4)+'Export encrypted backup</button>'}
+ else if(k==='invite'){var cells='',hh=hash('invite'+S.name);for(var y=0;y<21;y++)for(var x=0;x<21;x++){var f=function(ox,oy){var dx=x-ox-3,dy=y-oy-3;if(Math.abs(dx)>4||Math.abs(dy)>4)return null;var d=Math.max(Math.abs(dx),Math.abs(dy));return d===4?false:(d===3||d<=1)},on=null;[[0,0],[14,0],[0,14]].forEach(function(o){var r=f(o[0],o[1]);if(r!==null)on=r});if(on===null){hh=Math.imul(hh,1103515245)+12345>>>0;on=((hh>>>10)&1)===0}cells+='<i style="background:'+(on?'#0C0C14':'transparent')+'"></i>'}
+  h='<div class="row" style="justify-content:space-between"><h2>Add someone.</h2><button class="ib" data-a="closem" aria-label="Close">'+I('x',22)+'</button></div><div class="row" style="gap:22px;flex-wrap:wrap"><div class="qr" role="img" aria-label="Your invite code">'+cells+'</div><div class="grow" style="min-width:180px;display:flex;flex-direction:column;gap:10px"><div class="disp" style="font-size:26px">'+esc(S.name||'You')+'’s device</div><p style="font-size:14.5px;color:var(--mute)">Ask them to scan this in Chirp. It only works for people on the same Wi-Fi.</p><div class="mono" style="font-size:12px;word-break:break-all;background:var(--white);border:2px solid var(--ink);border-radius:12px;padding:10px">chirp://add/192.168.1.24:47120/'+fpOf(S.name||'You')[0]+'</div></div></div><div class="row" style="gap:12px;flex-wrap:wrap"><button class="btn tang" data-a="toast" data-v="Invite string copied">'+I('copy',18)+'Copy invite</button><button class="btn ghost" data-a="closem">Done</button></div>'}
+ else if(k==='addr'){h='<div class="row" style="justify-content:space-between"><h2>Add by address.</h2><button class="ib" data-a="closem" aria-label="Close">'+I('x',22)+'</button></div><p style="color:var(--mute)">Not seeing someone? Enter their address or invite string.</p><div class="field"><label for="ad">Address (ip:port) or invite</label><input id="ad" class="pw" value="" placeholder="192.168.1.40:47120" style="font-family:var(--mono);font-size:15px"></div><button class="btn tang" data-a="dial">Connect</button>'}
+ else if(k==='msg'&&p){var mm=MSG[p.id][S.mi];if(!mm)return '';h='<div class="row" style="justify-content:space-between"><h2>Message.</h2><button class="ib" data-a="closem" aria-label="Close">'+I('x',22)+'</button></div><div class="pcard"><h4>'+(mm.f==='me'?'You':esc(p.name))+' · '+mm.ts+'</h4><p style="font-size:16px;font-weight:600">'+esc(mm.t||mm.name||'Attachment')+'</p></div><div class="row" style="gap:10px;flex-wrap:wrap"><button class="btn ink sm" data-a="mreply">'+I('reply',18)+'Reply</button><button class="btn soft sm" data-a="mcopy">'+I('copy',18)+'Copy</button><button class="btn red sm" data-a="mdel">'+I('trash',18)+'Delete for me</button></div><p style="font-size:13px;color:var(--mute)">Deleting removes it from this device only. '+esc(p.name.split(' ')[0])+' keeps their copy.</p>'}
+ else if(k==='wipe'){h='<h2>Delete every message?</h2><p>This cannot be undone. Unsent messages are deleted too. Your key and pinned people stay.</p><div class="row" style="gap:12px;flex-wrap:wrap"><button class="btn red" data-a="dowipe">Delete all</button><button class="btn ghost" data-a="closem">Cancel</button></div>'}
+ else if(k==='forget'&&p){h='<h2>Forget '+esc(p.name)+'?</h2><p>Deletes the pinned key and every message with them on this device. They keep their own copy.</p><div class="row" style="gap:12px;flex-wrap:wrap"><button class="btn red" data-a="doforget">Forget</button><button class="btn ghost" data-a="closem">Cancel</button></div>'}
+ return h?'<div class="scrim'+(k==='msg'?' sheet':'')+'" data-a="scrim"><div class="modal" role="dialog" aria-modal="true">'+h+'</div></div>':''}
+
+/* ---------------- render + actions ---------------- */
+function draftKey(){return S.tab==='rooms'?'r:'+S.room:'c:'+S.cur}
+function render(o){
+ o=o||{};var st=$('#stage'),old=st.querySelector('.msgs'),atB=!old||old.scrollHeight-old.scrollTop-old.clientHeight<90,top=old?old.scrollTop:0;
+ var land=st.querySelector('.landing'),lt=land?land.scrollTop:0;
+ var focusId=document.activeElement&&document.activeElement.id,selS=null;
+ if(focusId&&document.activeElement.selectionStart!=null)selS=document.activeElement.selectionStart;
+ st.innerHTML=S.view==='landing'?landing():S.view==='onboard'?onboard():S.view==='restore'?restore():appHTML();
+ $('#overlay').innerHTML=modalHTML();
+ var n=st.querySelector('.msgs');if(n){n.scrollTop=(o.bottom||atB)?n.scrollHeight:top}
+ if(land&&o.keepLand){var nl=st.querySelector('.landing');if(nl)nl.scrollTop=lt}
+ if(o.focus==='ta'){var ta=$('#ta');if(ta){ta.focus();ta.setSelectionRange(ta.value.length,ta.value.length)}}
+ else if(focusId&&!o.nofocus){var fe=document.getElementById(focusId);if(fe){fe.focus();if(selS!=null&&fe.setSelectionRange)try{fe.setSelectionRange(selS,selS)}catch(e){}}}
+ var pq=$('#pq');if(pq&&o.pal){pq.focus()}
+ var md=$('#overlay input');if(md&&o.modalfocus)md.focus();
+ var ta2=$('#ta');if(ta2)grow(ta2);
+}
+function grow(t){t.style.height='auto';t.style.height=Math.min(t.scrollHeight,140)+'px'}
+function setDev(v){S.phone=v==='phone';document.body.classList.toggle('phone',S.phone);$('#sw-d').setAttribute('aria-pressed',!S.phone);$('#sw-p').setAttribute('aria-pressed',S.phone)}
+function botReply(pid){
+ var p=PEERS[pid];if(!p||!p.online||p.trust==='changed')return;
+ var pool=REPLIES[pid]||[];if(!pool.length)return;
+ setTimeout(function(){S.typing=pid;if(S.view==='app'&&S.tab==='chats'&&S.cur===pid)render({bottom:true,nofocus:1});
+  setTimeout(function(){S.typing=null;var t=pool[(MSG[pid].length)%pool.length];if(!t)return;MSG[pid].push({f:pid,t:t,ts:nowT()});
+   if(!(S.view==='app'&&S.tab==='chats'&&S.cur===pid&&!(S.phone&&S.m!=='thread')))unread[pid]=(unread[pid]||0)+1;
+   if(S.view==='app')render({bottom:true,nofocus:1})},1300)},700)}
+function sendMsg(){
+ var key=draftKey(),text=(S.draft[key]||'').trim();if(!text)return;
+ if(S.tab==='rooms'){var rm=ROOMS[S.room];rm.msgs.push({f:'me',t:text,ts:nowT(),r:{}});S.draft[key]='';render({bottom:true,focus:'ta'});
+  var who=rm.members[Math.floor(Math.random()*rm.members.length)],lines=['Agreed.','Good call.','Same here.','Ha, yes.'];
+  setTimeout(function(){S.typing='room';if(S.tab==='rooms')render({bottom:true,nofocus:1});setTimeout(function(){S.typing=null;rm.msgs.push({f:who,t:lines[rm.msgs.length%lines.length],ts:nowT(),r:{}});if(S.view==='app')render({bottom:true,nofocus:1})},1200)},600);return}
+ var p=PEERS[S.cur];if(p.trust==='changed'||p.trust==='unknown')return;
+ var m={f:'me',t:text,ts:nowT(),s:p.online?'sent':'queued'};MSG[p.id].push(m);S.draft[key]='';
+ if(!p.online)log('queued message for '+p.name,'');
+ render({bottom:true,focus:'ta'});
+ if(p.online){setTimeout(function(){m.s='delivered';if(S.view==='app')render({nofocus:1});botReply(p.id)},700)}
+ else toast('Queued. It sends when '+p.name.split(' ')[0]+' is back.')}
+function priyaOnline(){
+ var p=PEERS.priya;if(p.online)return;p.online=true;p.nearby=true;log('found Priya N. 192.168.1.41','ok');log('noise xx ok · key matches pin','ok');
+ var q=MSG.priya.filter(function(m){return m.s==='queued'});
+ setTimeout(function(){q.forEach(function(m){m.s='delivered'});if(q.length)log('delivered '+q.length+' queued message'+(q.length>1?'s':'')+' to Priya N.','ok');if(S.view==='app')render({nofocus:1});toast('Priya is back. Queued messages delivered.');botReply('priya')},900);
+ if(S.view==='app')render({nofocus:1})}
+function jonasAppears(){var p=PEERS.jonas;if(!p.hidden)return;p.hidden=false;p.nearby=true;log('found Jonas’s iPad · new key');if(S.view==='app'){render({nofocus:1});toast('Jonas’s iPad found nearby')}
+ setTimeout(function(){p.online=true;p.trust='new';log('noise xx ok · first contact · key pinned','ok');if(S.view==='app')render({nofocus:1})},4000)}
+function wifiToggle(){
+ S.offline=!S.offline;
+ if(S.offline){Object.keys(PEERS).forEach(function(k){var p=PEERS[k];p._was=p.online;p.online=false;if(p.nearby)p._near=true;p.nearby=false});log('wlan down · interface en0 lost','');toast('Wi-Fi dropped. Chirp keeps trying.',true)}
+ else{Object.keys(PEERS).forEach(function(k){var p=PEERS[k];if(p._was)p.online=true;if(p._near)p.nearby=true;p._was=p._near=false});log('wlan up · re-announced _chirp._tcp','ok');var n=0;Object.keys(MSG).forEach(function(k){if(PEERS[k].online)MSG[k].forEach(function(m){if(m.s==='queued'){m.s='delivered';n++}})});if(n)log('delivered '+n+' queued message'+(n>1?'s':''),'ok');toast('Back online.'+(n?' '+n+' queued message'+(n>1?'s':'')+' delivered.':''))}
+ render({nofocus:1})}
+var A={
+ landing:function(){S.view='landing';S.step=0;render()},
+ onboard:function(){S.view='onboard';S.step=0;S.gen=0;render()},
+ restore:function(){S.view='restore';S.pass='';S.file=false;render()},
+ pickfile:function(){S.file=true;render({nofocus:1})},
+ dorestore:function(){S.name=S.name||'Matty';S.restored=true;S.backupDone=true;S.view='app';S.tab='chats';S.m='list';render();toast('Key restored. Everyone you verified stays verified.');kick()},
+ next:function(){if(S.step===0&&!S.name.trim())return;S.step=Math.min(3,S.step+1);if(S.step===1){S.gen=0;render();genTick()}else render()},
+ prev:function(){S.step=Math.max(0,S.step-1);S.gen=S.step===1?4:S.gen;render()},
+ export:function(){if(S.pass.length<12)return;S.backupDone=true;S.modal=null;toast('Encrypted backup saved (demo)');render()},
+ permn:function(){S.perm.notif=!S.perm.notif;render()},
+ enter:function(){S.settings.notif=S.perm.notif;S.view='app';S.tab='chats';S.cur='alex';S.m='list';render();toast('Welcome, '+(S.name||'you')+'. 4 people found nearby.');kick()},
+ scroll:function(el){var t=document.getElementById(el.dataset.t);if(t)t.scrollIntoView({behavior:'smooth',block:'start'})},
+ faq:function(el){var q=el.parentNode,o=q.classList.toggle('open');el.setAttribute('aria-expanded',o)},
+ dev:function(el){setDev(el.dataset.v)},
+ tab:function(el){S.tab=el.dataset.v;S.pal=false;S.modal=null;S.m='list';if(S.tab==='chats'&&!S.cur)S.cur='alex';render({bottom:true})},
+ open:function(el){var id=el.dataset.v;S.pal=false;S.tab='chats';S.cur=id;S.m='thread';unread[id]=0;S.dtab='trust';if(id==='jonas'&&PEERS.jonas.hidden)return;
+  var p=PEERS[id];if(p.trust==='new'&&p.online&&!p._shook&&!S.offline){p._shook=true;S.hs=id;S.hsStep=0;log('handshake with '+p.name+' (XX)');render({bottom:true});var tk=function(){if(S.hs!==id)return;S.hsStep++;if(S.hsStep>3){S.hs=null;log('session up with '+p.name,'ok')}if(S.view==='app')render({bottom:true,nofocus:1});if(S.hs===id)setTimeout(tk,650)};setTimeout(tk,650);return}
+  render({bottom:true})},
+ wifi:wifiToggle,
+ msg:function(el){S.mi=+el.dataset.i;S.modal='msg';render()},
+ mreply:function(){var p=PEERS[S.cur],m=MSG[p.id][S.mi];if(!m)return;var k='c:'+p.id;S.draft[k]='> '+(m.t||m.name||'')+'\n'+(S.draft[k]||'');S.modal=null;render({focus:'ta'})},
+ mcopy:function(){S.modal=null;render({nofocus:1});toast('Copied')},
+ mdel:function(){var p=PEERS[S.cur];MSG[p.id].splice(S.mi,1);S.modal=null;render({nofocus:1});toast('Deleted from this device')},
+ openroom:function(el){S.pal=false;S.tab='rooms';S.room=el.dataset.v;S.m='thread';render({bottom:true})},
+ back:function(){S.m='list';render()},
+ panel:function(){S.panel=!S.panel;S.m=S.phone||$('#frame').clientWidth<=900?(S.panel?'detail':'thread'):S.m;render()},
+ dtab:function(el){S.dtab=el.dataset.v;render()},
+ send:sendMsg,
+ attach:function(){toast('File sharing is a design preview. Not in the v1 daemon.')},
+ react:function(el){var rm=ROOMS[S.room],m=rm.msgs[+el.dataset.v],k=el.dataset.k;m.r=m.r||{};m.r[k]=m.r[k]||[];var i=m.r[k].indexOf('me');if(i>-1){m.r[k].splice(i,1);if(!m.r[k].length)delete m.r[k]}else m.r[k].push('me');render({nofocus:1})},
+ trust:function(){S.modal='trust';render()},
+ verify:function(){var p=PEERS[S.cur];p.trust='verified';log('verified '+p.name,'ok');S.modal=null;render({nofocus:1});toast(p.name+' marked as verified')},
+ unverify:function(){var p=PEERS[S.cur];p.trust='new';S.modal=null;render({nofocus:1});toast('Verified mark removed')},
+ acceptkey:function(){var p=PEERS[S.cur];p.fp=p.newfp;p.trust='new';log('re-pinned '+p.name+' to new key');S.modal=null;render({nofocus:1});toast('New key pinned. Verify again when you can.')},
+ forget:function(){S.modal='forget';render()},
+ doforget:function(){var p=PEERS[S.cur];MSG[p.id]=[];p.hidden=true;p.online=false;p.nearby=false;S.modal=null;var nx=visiblePeers()[0];S.cur=nx?nx.id:null;S.m='list';log('forgot '+p.name);render();toast(p.name+' forgotten. They may reappear if they’re still nearby.')},
+ modal:function(el){S.modal=el.dataset.v;render({modalfocus:1})},
+ closem:function(){S.modal=null;render({nofocus:1})},
+ scrim:function(el,e){if(e.target===el){S.modal=null;render({nofocus:1})}},
+ pal:function(){S.pal=true;S.palq='';render({pal:1})},
+ closepal:function(el,e){if(e.target===el){S.pal=false;render({nofocus:1})}},
+ palgo:function(el){var a=el.dataset.pa;if(A[a])A[a]({dataset:{v:el.dataset.v}})},
+ set:function(el){var k=el.dataset.v;S.settings[k]=!S.settings[k];render({nofocus:1})},
+ keep:function(el){S.settings.keep=el.dataset.v;render({nofocus:1})},
+ dowipe:function(){Object.keys(MSG).forEach(function(k){MSG[k]=MSG[k].filter(function(m){return m.s==='queued'&&false})});S.modal=null;render();toast('All messages deleted. Your key and pinned people stay.')},
+ copyfp:function(){toast('Fingerprint copied')},
+ toast:function(el){toast(el.dataset.v)},
+ dial:function(){var v=($('#ad')||{}).value;S.modal=null;render({nofocus:1});toast(v&&v.trim()?'Dialing '+v.trim()+' … handshake pending':'Enter an address first',!(v&&v.trim()))},
+ announce:function(){log('announce _chirp._tcp on en0');render({nofocus:1});toast('Announced on Wi-Fi')},
+ priyaon:priyaOnline,
+ retry:function(){toast('Retrying. Priya is still offline.',true)},
+ delq:function(el){var l=MSG[el.dataset.v];l.splice(+el.dataset.i,1);render({nofocus:1});toast('Removed from outbox')}
+};
+document.addEventListener('click',function(e){var el=e.target.closest('[data-a]');if(!el)return;var a=A[el.dataset.a];if(a){if(el.dataset.a==='scrim'||el.dataset.a==='closepal'){a(el,e)}else{if(el.disabled)return;a(el,e)}}});
+document.addEventListener('input',function(e){var t=e.target,k=t.dataset&&t.dataset.in;if(!k)return;
+ if(k==='name'){S.name=t.value;var b=document.querySelector('[data-a=next]');if(b)b.disabled=!S.name.trim()}
+ else if(k==='pass'){S.pass=t.value;render()}
+ else if(k==='draft'){S.draft[t.dataset.k]=t.value;grow(t);var sb=document.querySelector('.send');if(sb)sb.disabled=t.disabled||!t.value.trim()}
+ else if(k==='q'){S.q=t.value;render({keepq:1})}
+ else if(k==='palq'){S.palq=t.value;render({pal:1})}});
+document.addEventListener('keydown',function(e){
+ if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='k'&&S.view==='app'){e.preventDefault();A.pal()}
+ else if(e.key==='Escape'){if(S.pal||S.modal){S.pal=false;S.modal=null;render({nofocus:1})}}
+ else if(e.key==='Enter'&&!e.shiftKey&&e.target.id==='ta'&&!e.isComposing){e.preventDefault();sendMsg()}
+ else if(e.key==='Enter'&&S.view==='onboard'&&S.step===0&&e.target.id==='nm'){A.next()}
+ else if(e.key==='Enter'&&e.target.id==='pq'){var b=document.querySelector('.pal .res button');if(b)b.click()}});
+function genTick(){if(S.view!=='onboard'||S.step!==1)return;if(S.gen<GENLINES.length){setTimeout(function(){if(S.view==='onboard'&&S.step===1){S.gen++;render();genTick()}},620)}}
+var kicked=false;
+function kick(){if(kicked)return;kicked=true;setTimeout(priyaOnline,22000);setTimeout(jonasAppears,9000)}
+if(window.claude&&window.claude.hot&&window.claude.hot.snapshot){}
+render();
+})();
+</script>
+</body></html>
