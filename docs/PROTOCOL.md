@@ -1,0 +1,93 @@
+# Chirp wire protocol, version 1
+
+Everything below is implemented in `internal/proto` and `internal/session`.
+
+## Discovery (mDNS / DNS-SD)
+
+Service type `_chirp._tcp` on `local.`. One instance per device.
+
+| Field | Value |
+| --- | --- |
+| Instance name | first 16 hex chars of the key fingerprint (unique per key, so two people called "Alex" never collide) |
+| Port | the TCP port the daemon listens on |
+| TXT `v` | `1` |
+| TXT `name` | display name |
+| TXT `fp` | 64 hex chars, SHA-256 of the static public key |
+
+TXT data is **advisory and unauthenticated**. It only decides who to dial. Identity is proven by the handshake, never by what an mDNS packet claims. Entries with a bad version, missing name, wrong-length fingerprint or out-of-range port are dropped (`fromEntry`, unit tested). IPv6 link-local addresses are skipped because they need an interface zone.
+
+## Who dials
+
+For every pair, exactly one side dials: the device whose fingerprint (as a lowercase hex string) sorts **lower** connects to the higher one. Both sides browse, so both learn of each other and only one opens a socket. This removes duplicate-connection races without a tie-break protocol. If two sessions for the same peer do exist (for example after a restart), the newest replaces the older.
+
+## Transport
+
+TCP. Every message on the wire, handshake and data alike, is one frame:
+
+```
++---------------+----------------------+
+| length (u16)  | payload (1..65535 B) |
++---------------+----------------------+
+```
+
+Big-endian length. Zero-length frames are rejected. 65535 is the Noise message limit, so a frame never has to be split.
+
+## Handshake: Noise_XX_25519_ChaChaPoly_SHA256
+
+Prologue: the ASCII string `chirp/1`. A peer speaking another version fails the handshake (the transcript hashes differ) instead of misparsing frames. Neither side needs to know the other's key in advance, and both static keys are encrypted from a passive observer.
+
+```
+-> e
+<- e, ee, s, es          payload: Hello
+-> s, se                 payload: Hello
+```
+
+`Hello` is JSON: `{"v":1,"name":"Alex"}`. It is sent inside the encrypted handshake payload, so the display name is authenticated by the same transcript as the key. The handshake has a 5 second deadline. The responder caps concurrent unauthenticated handshakes at 32 and closes the excess.
+
+After the handshake each direction has its own `CipherState`. Noise nonces are implicit counters, so **any decrypt failure ends the session**: a dropped or reordered frame cannot be recovered and must not be papered over.
+
+## Application frames
+
+Each transport frame carries one ChaCha20-Poly1305 ciphertext of one JSON envelope (`internal/proto.Envelope`):
+
+| `t` | Fields | Meaning |
+| --- | --- | --- |
+| `msg` | `id` (32 hex), `ts` (sender millis, informational), `body` (1..4096 bytes, valid UTF-8) | a chat message |
+| `ack` | `id` | the receiver has **persisted** message `id` |
+| `ping` | none | keepalive, sent every 10 s |
+
+The decoder rejects unknown fields, trailing data, bad IDs, empty or oversized bodies and invalid UTF-8. `FuzzDecode` checks that anything it accepts re-encodes to an identical value.
+
+If nothing is read for 30 s the session is declared dead. TCP alone can take minutes to notice a device that vanished from Wi-Fi.
+
+## Delivery semantics
+
+**At-least-once on the wire, exactly-once on screen.**
+
+1. The sender writes the message to its outbox (bbolt) *before* trying the network, status `queued`.
+2. On every new session, and on a backoff timer while a session is up, it (re)sends everything unacked, oldest first.
+3. The receiver stores the message first, then sends `ack`. If the store fails, it does **not** ack and drops the session.
+4. The sender marks the message `delivered` only on `ack`, and only if the ack comes from the peer the message was addressed to.
+5. The receiver deduplicates by `id` (a separate index), so a retransmit is stored once. Duplicates are still acked, because the sender may have missed the first ack.
+
+Ordering: one TCP stream per peer, flushed oldest first under a per-link lock, so messages arrive in send order. This is tested with 50 messages.
+
+## Trust: TOFU keyed by name
+
+The pinning handle is the case-insensitive display name.
+
+| Situation | Result |
+| --- | --- |
+| unseen name | pin the key, state `new` (unverified) |
+| known name, same key | refresh `lastSeen` |
+| known name, **different key** | keep the old pin, record the new key as pending, **close the session**, block sending, state `changed` |
+| user accepts pending key | re-pin to the new key and reset `verified` to false |
+
+Users can mark a pin `verified` after comparing the 64-hex fingerprint (shown as 16 groups of 4) or the six-word string out of band.
+
+### What this does not protect against
+
+* First contact is trust-on-first-use. An attacker present at first contact wins.
+* Names are the handle. Two different people who both call themselves "Dana" collide, and the second one shows up as a key change. That is the safe failure, but it is confusing.
+* The six words are 48 bits derived from one public key. They stop casual mistakes, not an attacker who can grind keys. Compare the full fingerprint for anything that matters.
+* No forward secrecy for stored messages: they sit in a plaintext bbolt file, protected only by OS file permissions (`0600`).

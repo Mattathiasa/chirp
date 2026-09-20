@@ -1,0 +1,38 @@
+package identity
+
+// wordList has exactly 256 entries so one byte maps to one word.
+// Lowercase, ASCII, unique. Order is part of the format: do not reorder.
+var wordList = [256]string{
+	"acorn", "amber", "anchor", "apple", "arrow", "aspen", "atlas", "aurora",
+	"badge", "bagel", "baker", "basalt", "beacon", "birch", "bison", "blaze",
+	"bloom", "bolt", "bramble", "breeze", "bridge", "brook", "cabin", "cactus",
+	"cairn", "candle", "canyon", "cedar", "chalk", "cherry", "cider", "cinder",
+	"clover", "cobalt", "comet", "copper", "coral", "cotton", "crane", "creek",
+	"crest", "crisp", "crown", "dagger", "daisy", "dapple", "dawn", "delta",
+	"dune", "eagle", "ebony", "ember", "falcon", "fern", "ferry", "fjord",
+	"flint", "forest", "fossil", "frost", "garnet", "ginger", "glacier", "granite",
+	"grove", "harbor", "hazel", "heron", "hollow", "honey", "iris", "ivory",
+	"jasper", "jungle", "kettle", "kite", "lagoon", "lantern", "larch", "laurel",
+	"lemon", "lichen", "lilac", "linen", "lotus", "lumen", "maple", "marble",
+	"meadow", "mesa", "mint", "mist", "moss", "mango", "nectar", "nickel",
+	"nutmeg", "oasis", "olive", "onyx", "opal", "orchid", "otter", "oyster",
+	"paddle", "pebble", "pepper", "pine", "plum", "pond", "poppy", "prairie",
+	"quartz", "quill", "rabbit", "raven", "reed", "ridge", "river", "robin",
+	"rocket", "saddle", "saffron", "sage", "sailor", "sand", "sequoia", "shadow",
+	"silver", "sketch", "slate", "sparrow", "spruce", "stone", "summit", "sunset",
+	"swift", "tanager", "thistle", "thunder", "tiger", "timber", "topaz", "tulip",
+	"tundra", "umber", "valley", "velvet", "violet", "walnut", "willow", "winter",
+	"yarrow", "zephyr", "zinc", "almond", "bamboo", "barley", "basil", "berry",
+	"biscuit", "blossom", "bronze", "butter", "canvas", "caramel", "carrot", "cashew",
+	"celery", "chestnut", "cinnamon", "citrus", "clay", "cocoa", "compass", "cricket",
+	"cypress", "dolphin", "dragon", "drift", "echo", "elm", "engine", "feather",
+	"fiddle", "finch", "flame", "flute", "galaxy", "garden", "gecko", "glow",
+	"gravel", "guitar", "harvest", "hawk", "hickory", "island", "jade", "jelly",
+	"juniper", "kayak", "koala", "ladder", "lark", "lemur", "lime", "lunar",
+	"magnet", "marsh", "mirror", "mosaic", "mule", "nova", "orbit", "panda",
+	"parrot", "pelican", "pilot", "pixel", "planet", "puffin", "pulse", "radar",
+	"rain", "rhythm", "ripple", "rustic", "sable", "satin", "scarlet", "shell",
+	"signal", "spark", "spice", "sprout", "stream", "sugar", "tango", "teal",
+	"thyme", "trail", "tulle", "turtle", "vapor", "violin", "voyage", "wagon",
+	"walrus", "wheat", "whisper", "yonder", "zebra", "pearl", "tempo", "lynx",
+}

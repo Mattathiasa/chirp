@@ -1,0 +1,19 @@
+# build output
+/bin/
+/dist/
+*.test
+*.out
+
+# never commit key material or databases
+*.db
+*.db.lock
+chirp-key-backup*.json
+
+# sandbox-only build files (not part of the project)
+go.sandbox.mod
+go.sandbox.sum
+
+# editors / OS
+.idea/
+.vscode/
+.DS_Store

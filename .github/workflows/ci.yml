@@ -1,0 +1,34 @@
+name: ci
+on:
+  push: { branches: [main] }
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: '1.23' }
+      - name: gofmt
+        run: test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
+      - run: go mod tidy   # no-op once go.sum is committed
+      - run: go vet ./...
+      - run: go test -race -count=1 ./...
+      - name: fuzz smoke
+        run: go test ./internal/proto -run '^$' -fuzz FuzzDecode -fuzztime 20s
+      - name: govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        goos: [linux, darwin, windows]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: '1.23' }
+      - run: go mod tidy
+      - run: GOOS=${{ matrix.goos }} go build -o /dev/null ./cmd/chirpd
+        shell: bash
