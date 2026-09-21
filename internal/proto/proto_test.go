@@ -45,6 +45,11 @@ func TestEnvelope(t *testing.T) {
 		{T: TypeMsg, ID: id, TS: 1, Body: "hi"},
 		{T: TypeAck, ID: id},
 		{T: TypePing},
+		{T: TypeReact, ID: id, Emoji: "👍"},
+		{T: TypeDel, ID: id},
+		{T: TypeDelAll, ID: id},
+		{T: TypeTyping},
+		{T: TypeRead, Target: id},
 	}
 	for _, e := range good {
 		b, err := Encode(e)
@@ -52,8 +57,11 @@ func TestEnvelope(t *testing.T) {
 			t.Fatalf("%+v: %v", e, err)
 		}
 		got, err := Decode(b)
-		if err != nil || got != e {
-			t.Fatalf("roundtrip %+v -> %+v (%v)", e, got, err)
+		if err != nil {
+			t.Fatalf("decode %+v: %v", e, err)
+		}
+		if got.T != e.T || got.ID != e.ID || got.Body != e.Body || got.Emoji != e.Emoji || got.Target != e.Target {
+			t.Fatalf("roundtrip %+v -> %+v", e, got)
 		}
 	}
 	bad := []Envelope{
@@ -63,6 +71,10 @@ func TestEnvelope(t *testing.T) {
 		{T: TypeMsg, ID: id, Body: "\xff\xfe"},
 		{T: TypeAck, ID: id, Body: "x"},
 		{T: TypePing, ID: id},
+		{T: TypeReact, ID: id},
+		{T: TypeReact, ID: id, Emoji: strings.Repeat("😀", 33)},
+		{T: TypeRead},
+		{T: TypeFile, ID: id},
 		{T: "nope"},
 	}
 	for _, e := range bad {
@@ -79,7 +91,14 @@ func TestEnvelope(t *testing.T) {
 
 func FuzzDecode(f *testing.F) {
 	id, _ := NewID(rand.Reader)
-	for _, e := range []Envelope{{T: TypeMsg, ID: id, Body: "hello"}, {T: TypeAck, ID: id}, {T: TypePing}} {
+	for _, e := range []Envelope{
+		{T: TypeMsg, ID: id, Body: "hello"},
+		{T: TypeAck, ID: id},
+		{T: TypePing},
+		{T: TypeReact, ID: id, Emoji: "👍"},
+		{T: TypeDel, ID: id},
+		{T: TypeRead, Target: id},
+	} {
 		b, _ := Encode(e)
 		f.Add(b)
 	}
@@ -95,8 +114,11 @@ func FuzzDecode(f *testing.F) {
 			t.Fatalf("decoded but cannot encode: %v", err)
 		}
 		e2, err := Decode(b)
-		if err != nil || e2 != e {
-			t.Fatalf("unstable: %+v vs %+v (%v)", e, e2, err)
+		if err != nil {
+			t.Fatalf("re-decode failed: %v", err)
+		}
+		if e2.T != e.T || e2.ID != e.ID || e2.Body != e.Body || e2.Emoji != e.Emoji || e2.Target != e.Target {
+			t.Fatalf("unstable: %+v vs %+v", e, e2)
 		}
 	})
 }

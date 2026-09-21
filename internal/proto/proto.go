@@ -16,15 +16,27 @@ import (
 )
 
 const (
-	// Version is the protocol version announced in the handshake payload.
-	Version = 1
+	// Version is the current protocol version.
+	Version = 2
 	// MaxFrame bounds one frame on the wire. Noise transport messages are
 	// limited to 65535 bytes including the 16-byte tag.
 	MaxFrame = 65535
 	// MaxBody bounds one chat message body in bytes.
 	MaxBody = 4096
+	// MaxFileSize is the default maximum file transfer size (100 MB).
+	MaxFileSize = 100 << 20
 	// IDLen is the byte length of a message ID.
 	IDLen = 16
+	// ChunkSize is the size of each file transfer chunk.
+	ChunkSize = 64 << 10 // 64 KB
+)
+
+// Capabilities advertised in the Hello payload.
+const (
+	CapFiles     = "files"     // file transfer support
+	CapReactions = "reactions" // reaction support
+	CapReceipts  = "receipts"  // read receipt support
+	CapTyping    = "typing"    // typing indicator support
 )
 
 // Frame errors.
@@ -69,17 +81,32 @@ func ReadFrame(r io.Reader) ([]byte, error) {
 type Type string
 
 const (
-	TypeMsg  Type = "msg"
-	TypeAck  Type = "ack"
-	TypePing Type = "ping"
+	TypeMsg    Type = "msg"
+	TypeAck    Type = "ack"
+	TypePing   Type = "ping"
+	TypeReact  Type = "react"
+	TypeDel    Type = "del"    // delete-for-me
+	TypeDelAll Type = "delall" // delete-for-everyone (best effort)
+	TypeTyping Type = "typing"
+	TypeRead   Type = "read"
+	TypeFile   Type = "file"  // file metadata
+	TypeChunk  Type = "chunk" // file data chunk
 )
 
 // Envelope is the decrypted application frame.
 type Envelope struct {
-	T    Type   `json:"t"`
-	ID   string `json:"id,omitempty"`   // 32 hex chars, for msg and ack
-	TS   int64  `json:"ts,omitempty"`   // sender's unix millis, informational only
-	Body string `json:"body,omitempty"` // msg only, valid UTF-8, <= MaxBody bytes
+	T       Type   `json:"t"`
+	ID      string `json:"id,omitempty"`      // 32 hex chars
+	TS      int64  `json:"ts,omitempty"`      // sender's unix millis
+	Body    string `json:"body,omitempty"`    // msg only
+	ReplyTo string `json:"replyTo,omitempty"` // reply-to: message ID being quoted
+	Emoji   string `json:"emoji,omitempty"`   // react: emoji string
+	Target  string `json:"target,omitempty"`  // del/delall/read: target message ID
+	Src     string `json:"src,omitempty"`     // file: original filename
+	Size    int64  `json:"size,omitempty"`    // file: total size in bytes
+	Hash    string `json:"hash,omitempty"`    // file: SHA-256 hex of entire file
+	Offset  int64  `json:"offset,omitempty"`  // chunk: byte offset in file
+	Chunk   []byte `json:"chunk,omitempty"`   // chunk: file data (raw bytes, sent as base64 in JSON)
 }
 
 // NewID returns a random message ID from r.
@@ -132,6 +159,11 @@ func (e Envelope) validate() error {
 		if !utf8.ValidString(e.Body) {
 			return errors.New("proto: body is not valid UTF-8")
 		}
+		if e.ReplyTo != "" {
+			if err := checkID(e.ReplyTo); err != nil {
+				return fmt.Errorf("proto: bad replyTo: %w", err)
+			}
+		}
 	case TypeAck:
 		if err := checkID(e.ID); err != nil {
 			return err
@@ -142,6 +174,59 @@ func (e Envelope) validate() error {
 	case TypePing:
 		if e.ID != "" || e.Body != "" {
 			return errors.New("proto: ping must be empty")
+		}
+	case TypeReact:
+		if err := checkID(e.ID); err != nil {
+			return err
+		}
+		if e.Emoji == "" {
+			return errors.New("proto: react must have emoji")
+		}
+		if len(e.Emoji) > 32 { // rune count
+			return errors.New("proto: emoji too long")
+		}
+	case TypeDel:
+		if err := checkID(e.ID); err != nil {
+			return err
+		}
+	case TypeDelAll:
+		if err := checkID(e.ID); err != nil {
+			return err
+		}
+	case TypeTyping:
+		// typing is ephemeral, no ID needed
+	case TypeRead:
+		if e.Target == "" {
+			return errors.New("proto: read must have target")
+		}
+		if err := checkID(e.Target); err != nil {
+			return fmt.Errorf("proto: bad read target: %w", err)
+		}
+	case TypeFile:
+		if err := checkID(e.ID); err != nil {
+			return err
+		}
+		if e.Src == "" {
+			return errors.New("proto: file must have src")
+		}
+		if e.Size <= 0 || e.Size > MaxFileSize {
+			return errors.New("proto: file size out of range")
+		}
+		if e.Hash == "" || len(e.Hash) != 64 {
+			return errors.New("proto: file must have 64-char SHA-256 hash")
+		}
+		if _, err := hex.DecodeString(e.Hash); err != nil {
+			return errors.New("proto: file hash is not hex")
+		}
+	case TypeChunk:
+		if err := checkID(e.ID); err != nil {
+			return err
+		}
+		if e.Offset < 0 {
+			return errors.New("proto: chunk offset must be non-negative")
+		}
+		if len(e.Chunk) == 0 || len(e.Chunk) > ChunkSize+1024 { // base64 overhead
+			return errors.New("proto: chunk size out of range")
 		}
 	default:
 		return fmt.Errorf("proto: unknown type %q", e.T)
@@ -160,10 +245,30 @@ func checkID(id string) error {
 }
 
 // Hello is the Noise handshake payload each side sends (encrypted, after the
-// ephemeral exchange). It carries the display name and protocol version.
+// ephemeral exchange). It carries the display name, protocol version, and
+// capabilities for v2+ negotiation.
 type Hello struct {
-	V    int    `json:"v"`
-	Name string `json:"name"`
+	V    int      `json:"v"`
+	Name string   `json:"name"`
+	Caps []string `json:"caps,omitempty"` // v2+ capabilities
+}
+
+// HasCap checks if the Hello contains a capability.
+func (h Hello) HasCap(cap string) bool {
+	for _, c := range h.Caps {
+		if c == cap {
+			return true
+		}
+	}
+	return false
+}
+
+// RemoteVersion returns the negotiated version: min(local, remote).
+func RemoteVersion(local, remote int) int {
+	if remote < local {
+		return remote
+	}
+	return local
 }
 
 // Now returns unix millis; a variable so tests can pin it.

@@ -38,11 +38,18 @@ type Conn struct {
 	// RemoteName is the display name the peer claimed. It is NOT authenticated
 	// beyond being signed-by-key; treat it as a label.
 	RemoteName string
+	// RemoteVersion is the negotiated protocol version.
+	RemoteVersion int
+	// RemoteCaps are the peer's advertised capabilities.
+	RemoteCaps []string
 
 	wmu sync.Mutex
 	enc *noise.CipherState
 	dec *noise.CipherState // only touched by the single reader
 }
+
+// LocalCaps are the capabilities we advertise.
+var LocalCaps = []string{proto.CapFiles, proto.CapReactions, proto.CapReceipts, proto.CapTyping}
 
 // Initiator performs the handshake as the dialer.
 func Initiator(c net.Conn, id *identity.Identity) (*Conn, error) {
@@ -68,7 +75,7 @@ func handshake(c net.Conn, id *identity.Identity, initiator bool, prologue []byt
 	if err != nil {
 		return nil, err
 	}
-	hello, _ := json.Marshal(proto.Hello{V: proto.Version, Name: id.Name})
+	hello, _ := json.Marshal(proto.Hello{V: proto.Version, Name: id.Name, Caps: LocalCaps})
 
 	var (
 		peerHello       []byte
@@ -132,9 +139,8 @@ func handshake(c net.Conn, id *identity.Identity, initiator bool, prologue []byt
 	if err := json.Unmarshal(peerHello, &h); err != nil {
 		return nil, errors.New("session: bad hello")
 	}
-	if h.V != proto.Version {
-		return nil, fmt.Errorf("session: unsupported protocol version %d", h.V)
-	}
+	// Negotiate version: use the minimum of local and remote.
+	negotiated := proto.RemoteVersion(proto.Version, h.V)
 	name, err := identity.ValidateName(h.Name)
 	if err != nil {
 		return nil, fmt.Errorf("session: bad peer name: %w", err)
@@ -143,7 +149,11 @@ func handshake(c net.Conn, id *identity.Identity, initiator bool, prologue []byt
 	if len(rs) != 32 {
 		return nil, errors.New("session: missing peer static key")
 	}
-	return &Conn{raw: c, RemoteKey: append([]byte(nil), rs...), RemoteName: name, enc: csWrite, dec: csRead}, nil
+	return &Conn{
+		raw: c, RemoteKey: append([]byte(nil), rs...), RemoteName: name,
+		RemoteVersion: negotiated, RemoteCaps: h.Caps,
+		enc: csWrite, dec: csRead,
+	}, nil
 }
 
 // Send encrypts and writes one envelope. Safe for concurrent use.

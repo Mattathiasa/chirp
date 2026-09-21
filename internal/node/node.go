@@ -31,6 +31,7 @@ var (
 	ErrUnknownPeer = errors.New("node: unknown peer")
 	ErrKeyChanged  = errors.New("node: peer key changed; review it before sending")
 	ErrBadBody     = errors.New("node: message must be 1-4096 bytes of valid UTF-8")
+	ErrBadName     = errors.New("node: invalid display name")
 )
 
 // Config configures a Node.
@@ -239,6 +240,12 @@ func (n *Node) dialLoop(ctx context.Context) {
 		var todo []*nearby
 		n.mu.Lock()
 		for fp, nb := range n.nearby {
+			// Expire stale peers that haven't been announced recently.
+			if nb.up && now.Sub(nb.seen) > 2*time.Minute {
+				nb.up = false
+				n.logf("mdns: %q expired (no announcement for 2m)", nb.peer.Name)
+				n.emit(Event{Type: "peers"})
+			}
 			if !nb.up || nb.dialing || now.Before(nb.nextDial) || n.myFP >= fp {
 				continue // we only dial peers whose fingerprint sorts above ours
 			}
@@ -472,6 +479,21 @@ func (n *Node) DeleteFromOutbox(id string) error {
 		return err
 	}
 	n.emit(Event{Type: "outbox"})
+	return nil
+}
+
+// Dial connects to a peer at a specific host:port (add-by-address).
+func (n *Node) Dial(host, port string) error {
+	addr := net.JoinHostPort(host, port)
+	d := net.Dialer{Timeout: 5 * time.Second}
+	conn, err := d.Dial("tcp", addr)
+	if err != nil {
+		return fmt.Errorf("dial %s: %w", addr, err)
+	}
+	established := n.serve(context.Background(), conn, true, nil)
+	if !established {
+		return fmt.Errorf("dial %s: handshake failed", addr)
+	}
 	return nil
 }
 

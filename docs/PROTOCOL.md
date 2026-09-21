@@ -1,4 +1,4 @@
-# Chirp wire protocol, version 1
+# Chirp wire protocol, version 2
 
 Everything below is implemented in `internal/proto` and `internal/session`.
 
@@ -34,7 +34,7 @@ Big-endian length. Zero-length frames are rejected. 65535 is the Noise message l
 
 ## Handshake: Noise_XX_25519_ChaChaPoly_SHA256
 
-Prologue: the ASCII string `chirp/1`. A peer speaking another version fails the handshake (the transcript hashes differ) instead of misparsing frames. Neither side needs to know the other's key in advance, and both static keys are encrypted from a passive observer.
+Prologue: the ASCII string `chirp/2`. A peer speaking another version fails the handshake (the transcript hashes differ) instead of misparsing frames. Neither side needs to know the other's key in advance, and both static keys are encrypted from a passive observer.
 
 ```
 -> e
@@ -42,7 +42,9 @@ Prologue: the ASCII string `chirp/1`. A peer speaking another version fails the 
 -> s, se                 payload: Hello
 ```
 
-`Hello` is JSON: `{"v":1,"name":"Alex"}`. It is sent inside the encrypted handshake payload, so the display name is authenticated by the same transcript as the key. The handshake has a 5 second deadline. The responder caps concurrent unauthenticated handshakes at 32 and closes the excess.
+`Hello` is JSON: `{"v":2,"name":"Alex","caps":["files","reactions","receipts","typing"]}`. It is sent inside the encrypted handshake payload, so the display name is authenticated by the same transcript as the key. The handshake has a 5 second deadline. The responder caps concurrent unauthenticated handshakes at 32 and closes the excess.
+
+Version negotiation: `negotiated = min(local, remote)`. A v2 peer connecting to a v1 peer downgrades to text-only; the v1 peer simply ignores the `caps` field. This ensures backward compatibility.
 
 After the handshake each direction has its own `CipherState`. Noise nonces are implicit counters, so **any decrypt failure ends the session**: a dropped or reordered frame cannot be recovered and must not be papered over.
 
@@ -52,11 +54,31 @@ Each transport frame carries one ChaCha20-Poly1305 ciphertext of one JSON envelo
 
 | `t` | Fields | Meaning |
 | --- | --- | --- |
-| `msg` | `id` (32 hex), `ts` (sender millis, informational), `body` (1..4096 bytes, valid UTF-8) | a chat message |
+| `msg` | `id` (32 hex), `ts` (sender millis), `body` (1..4096 bytes, valid UTF-8), `replyTo` (optional, message ID) | a chat message, optionally replying to another |
 | `ack` | `id` | the receiver has **persisted** message `id` |
 | `ping` | none | keepalive, sent every 10 s |
+| `react` | `id` (32 hex), `emoji` (1..32 runes) | emoji reaction to message `id` |
+| `del` | `id` (32 hex) | delete-for-me (local only) |
+| `delall` | `id` (32 hex) | delete-for-everyone (best effort, peer deletes locally) |
+| `typing` | none | ephemeral typing indicator, not persisted |
+| `read` | `target` (32 hex, message ID) | read receipt for message `target` |
+| `file` | `id` (32 hex), `src` (filename), `size` (bytes, ≤100 MB), `hash` (64 hex SHA-256) | file transfer metadata |
+| `chunk` | `id` (32 hex), `offset` (byte offset), `chunk` (≤64 KB, base64 in JSON) | file data chunk |
 
-The decoder rejects unknown fields, trailing data, bad IDs, empty or oversized bodies and invalid UTF-8. `FuzzDecode` checks that anything it accepts re-encodes to an identical value.
+### Capabilities
+
+The Hello `caps` field advertises supported features. v2 peers always advertise all caps; v1 peers omit the field. Recipients check `conn.RemoteCaps` before using v2-only features.
+
+| Cap | Feature |
+| --- | --- |
+| `files` | File transfer (chunked, resumable, SHA-256 verified) |
+| `reactions` | Emoji reactions |
+| `receipts` | Read receipts |
+| `typing` | Typing indicators |
+
+### Backward compatibility
+
+A v2 peer connecting to a v1 peer negotiates version 1. The v1 peer ignores unknown envelope types (they are decoded and silently dropped). The v2 peer skips sending v2-only envelope types when `RemoteVersion == 1`.
 
 If nothing is read for 30 s the session is declared dead. TCP alone can take minutes to notice a device that vanished from Wi-Fi.
 
@@ -91,3 +113,55 @@ Users can mark a pin `verified` after comparing the 64-hex fingerprint (shown as
 * Names are the handle. Two different people who both call themselves "Dana" collide, and the second one shows up as a key change. That is the safe failure, but it is confusing.
 * The six words are 48 bits derived from one public key. They stop casual mistakes, not an attacker who can grind keys. Compare the full fingerprint for anything that matters.
 * No forward secrecy for stored messages: they sit in a plaintext bbolt file, protected only by OS file permissions (`0600`).
+
+## Encryption at rest
+
+Message bodies, peer keys, and the identity private key are optionally encrypted on disk using ChaCha20-Poly1305 AEAD.
+
+### Envelope format
+
+```
++------------+---------+-------+------------+
+| CHIRPENC   | version | nonce | ciphertext |
+| (8 bytes)  | (1)     | (12)  | (variable) |
++------------+---------+-------+------------+
+```
+
+The ciphertext includes a 16-byte Poly1305 authentication tag.
+
+### Key derivation
+
+- **Identity-derived**: HKDF-SHA256 from the identity private key with context `chirp/at-rest/v1`. Always available.
+- **Passphrase-derived**: Argon2id (t=3, m=64MiB, p=4) from a user passphrase with random 16-byte salt.
+- **Combined**: When both are present, the two 32-byte keys are XORed.
+
+### Storage
+
+Encrypted values are base64-encoded before JSON marshaling to preserve binary round-trip through bbolt and JSON.
+
+### Migration
+
+Existing unencrypted databases continue to work: `IsEncrypted()` checks the magic prefix. To encrypt an existing database, re-open it with a key and the store will encrypt on the next write.
+
+## Add-by-address (manual connection)
+
+When mDNS fails (wrong network, VPN, firewall), users can connect manually.
+
+### Invite URI format
+
+```
+chirp://add/<host>:<port>/<fingerprint-prefix>
+```
+
+- `<host>`: IPv4 address, IPv6 address in brackets, or hostname
+- `<port>`: TCP port number
+- `<fingerprint-prefix>`: at least 8 lowercase hex characters of the SHA-256 fingerprint
+
+Examples:
+- `chirp://add/192.168.1.5:9001/aabbccdd`
+- `chirp://add/[fd00::1]:9001/aabbccddeeff0011`
+
+### API
+
+- `POST /api/dial` with `{"host":"...","port":"..."}`: connects to a peer at the given address
+- `POST /api/invite/parse` with `{"uri":"..."}`: validates and parses an invite URI

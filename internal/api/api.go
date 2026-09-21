@@ -44,6 +44,7 @@ func New(a *app.App) *Server {
 	m.HandleFunc("POST /api/restore", s.restore)
 
 	m.HandleFunc("GET /api/me", s.needNode(s.me))
+	m.HandleFunc("POST /api/me/rename", s.needNode(s.rename))
 	m.HandleFunc("GET /api/peers", s.needNode(s.peers))
 	m.HandleFunc("GET /api/peers/{name}/messages", s.needNode(s.messages))
 	m.HandleFunc("POST /api/peers/{name}/messages", s.needNode(s.send))
@@ -51,6 +52,8 @@ func New(a *app.App) *Server {
 	m.HandleFunc("POST /api/peers/{name}/accept-key", s.needNode(s.acceptKey))
 	m.HandleFunc("POST /api/peers/{name}/retry", s.needNode(s.retry))
 	m.HandleFunc("DELETE /api/peers/{name}", s.needNode(s.forget))
+	m.HandleFunc("POST /api/dial", s.needNode(s.dial))
+	m.HandleFunc("POST /api/invite/parse", s.needNode(s.parseInvite))
 	m.HandleFunc("GET /api/outbox", s.needNode(s.outbox))
 	m.HandleFunc("DELETE /api/outbox/{id}", s.needNode(s.deleteOutbox))
 	m.HandleFunc("GET /api/diagnostics", s.needNode(s.diagnostics))
@@ -201,6 +204,20 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request, n *node.Node) {
 	writeJSON(w, 200, n.Me())
 }
 
+func (s *Server) rename(w http.ResponseWriter, r *http.Request, n *node.Node) {
+	var in struct {
+		Name string `json:"name"`
+	}
+	if !readJSON(w, r, &in) {
+		return
+	}
+	if err := n.Rename(in.Name); err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, 200, n.Me())
+}
+
 func (s *Server) peers(w http.ResponseWriter, r *http.Request, n *node.Node) {
 	ps, err := n.Peers()
 	if err != nil {
@@ -277,6 +294,36 @@ func (s *Server) forget(w http.ResponseWriter, r *http.Request, n *node.Node) {
 		return
 	}
 	writeJSON(w, 200, map[string]bool{"ok": true})
+}
+
+func (s *Server) dial(w http.ResponseWriter, r *http.Request, n *node.Node) {
+	var in struct {
+		Host string `json:"host"`
+		Port string `json:"port"`
+	}
+	if !readJSON(w, r, &in) {
+		return
+	}
+	if err := n.Dial(in.Host, in.Port); err != nil {
+		writeErr(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]bool{"ok": true})
+}
+
+func (s *Server) parseInvite(w http.ResponseWriter, r *http.Request, n *node.Node) {
+	var in struct {
+		URI string `json:"uri"`
+	}
+	if !readJSON(w, r, &in) {
+		return
+	}
+	host, port, fp, err := node.ParseInvite(in.URI)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]string{"host": host, "port": port, "fingerprint": fp})
 }
 
 func (s *Server) outbox(w http.ResponseWriter, r *http.Request, n *node.Node) {

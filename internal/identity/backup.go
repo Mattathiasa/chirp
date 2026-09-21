@@ -24,6 +24,56 @@ const (
 // passphrase and a corrupted file are indistinguishable by design.
 var ErrBadPassphrase = errors.New("wrong passphrase or corrupted backup")
 
+// PassphraseStrength returns a score from 0 (terrible) to 5 (excellent)
+// based on length, character diversity, and common-pattern detection.
+func PassphraseStrength(pw string) int {
+	if len(pw) == 0 {
+		return 0
+	}
+	score := 0
+	// length
+	switch {
+	case len(pw) >= 20:
+		score += 3
+	case len(pw) >= 16:
+		score += 2
+	case len(pw) >= 12:
+		score += 1
+	}
+	// character classes
+	hasLower, hasUpper, hasDigit, hasSpecial := false, false, false, false
+	for _, r := range pw {
+		switch {
+		case r >= 'a' && r <= 'z':
+			hasLower = true
+		case r >= 'A' && r <= 'Z':
+			hasUpper = true
+		case r >= '0' && r <= '9':
+			hasDigit = true
+		default:
+			hasSpecial = true
+		}
+	}
+	classes := 0
+	if hasLower {
+		classes++
+	}
+	if hasUpper {
+		classes++
+	}
+	if hasDigit {
+		classes++
+	}
+	if hasSpecial {
+		classes++
+	}
+	score += classes - 1 // 0-3 bonus for classes
+	if score > 5 {
+		score = 5
+	}
+	return score
+}
+
 type backupFile struct {
 	V    int    `json:"v"`
 	KDF  string `json:"kdf"`

@@ -1,8 +1,11 @@
 package store
 
 import (
+	"crypto/rand"
 	"fmt"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -178,5 +181,182 @@ func TestSettingsRange(t *testing.T) {
 	}
 	if got, _ := s.Settings(); got.RetentionDays != 7 {
 		t.Fatal("settings not persisted")
+	}
+}
+
+// ---- encryption at rest tests ----
+
+func openEncrypted(t *testing.T) (*Store, string, []byte) {
+	t.Helper()
+	key := make([]byte, 32)
+	if _, err := rand.Read(key); err != nil {
+		t.Fatal(err)
+	}
+	p := filepath.Join(t.TempDir(), "chirp.db")
+	s, err := OpenWithKey(p, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+	return s, p, key
+}
+
+func TestEncryptedIdentityRoundTrip(t *testing.T) {
+	s, _, _ := openEncrypted(t)
+	id, _ := identity.Generate("Alex")
+	if err := s.SaveIdentity(id); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.LoadIdentity()
+	if err != nil || got == nil {
+		t.Fatalf("load: %v %v", got, err)
+	}
+	if got.Name != "Alex" || string(got.Key.Private) != string(id.Key.Private) {
+		t.Fatal("identity mismatch")
+	}
+}
+
+func TestEncryptedPeerRoundTrip(t *testing.T) {
+	s, _, _ := openEncrypted(t)
+	k, _ := identity.Generate("Sam")
+	now := time.Now()
+	p, ok, err := s.Observe("Sam", k.Key.Public, now)
+	if err != nil || !ok {
+		t.Fatalf("observe: %v %v", err, ok)
+	}
+	got, err := s.GetPeer("Sam")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got.Key) != string(k.Key.Public) {
+		t.Fatal("peer key mismatch")
+	}
+	_ = p
+}
+
+func TestEncryptedMessageRoundTrip(t *testing.T) {
+	s, _, _ := openEncrypted(t)
+	now := time.Now()
+	_, dup, err := s.AddMessage(Message{ID: id32(1), Peer: "Sam", Dir: DirIn, Body: "hello secret world", TS: now, Status: StatusReceived})
+	if err != nil || dup {
+		t.Fatal(err, dup)
+	}
+	ms, err := s.Messages("Sam", 10)
+	if err != nil || len(ms) != 1 {
+		t.Fatalf("messages: %v %d", err, len(ms))
+	}
+	if ms[0].Body != "hello secret world" {
+		t.Fatalf("body mismatch: %q", ms[0].Body)
+	}
+}
+
+func TestEncryptedDBNoPlaintext(t *testing.T) {
+	s, p, _ := openEncrypted(t)
+	id, _ := identity.Generate("Alex")
+	s.SaveIdentity(id)
+	k, _ := identity.Generate("Sam")
+	s.Observe("Sam", k.Key.Public, time.Now())
+	s.AddMessage(Message{ID: id32(1), Peer: "Sam", Dir: DirIn, Body: "super secret message body", TS: time.Now(), Status: StatusReceived})
+	s.AddMessage(Message{ID: id32(2), Peer: "Sam", Dir: DirOut, Body: "another secret outgoing", TS: time.Now(), Status: StatusQueued})
+	s.Close()
+
+	// Read the raw DB file and search for plaintext
+	data, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, secret := range []string{"super secret message body", "another secret outgoing", string(id.Key.Private)} {
+		if strings.Contains(string(data), secret) {
+			t.Fatalf("DB file contains plaintext: %q found", secret)
+		}
+	}
+}
+
+func TestEncryptedOpenWithWrongKey(t *testing.T) {
+	s, p, _ := openEncrypted(t)
+	id, _ := identity.Generate("Alex")
+	s.SaveIdentity(id)
+	s.AddMessage(Message{ID: id32(1), Peer: "Sam", Dir: DirIn, Body: "secret", TS: time.Now(), Status: StatusReceived})
+	s.Close()
+
+	wrongKey := make([]byte, 32)
+	rand.Read(wrongKey)
+	s2, err := OpenWithKey(p, wrongKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s2.Close()
+	_, err = s2.LoadIdentity()
+	if err == nil {
+		t.Fatal("should fail with wrong key")
+	}
+}
+
+func TestEncryptedPeerKeyChange(t *testing.T) {
+	s, _, _ := openEncrypted(t)
+	a, _ := identity.Generate("Sam")
+	b, _ := identity.Generate("Sam")
+	now := time.Now()
+	_, ok, _ := s.Observe("Sam", a.Key.Public, now)
+	if !ok {
+		t.Fatal("first observe should succeed")
+	}
+	_, ok, _ = s.Observe("Sam", b.Key.Public, now)
+	if ok {
+		t.Fatal("different key should not match")
+	}
+	got, _ := s.GetPeer("Sam")
+	if got.PendingKey == nil {
+		t.Fatal("pending key not set")
+	}
+	if string(got.Key) != string(a.Key.Public) {
+		t.Fatal("original pin should be preserved")
+	}
+}
+
+func TestEncryptedPendingOutbox(t *testing.T) {
+	s, _, _ := openEncrypted(t)
+	now := time.Now()
+	s.AddMessage(Message{ID: id32(1), Peer: "Sam", Dir: DirOut, Body: "queued secret", TS: now, Status: StatusQueued})
+	pend, _ := s.Pending("")
+	if len(pend) != 1 || pend[0].Body != "queued secret" {
+		t.Fatalf("pending: %+v", pend)
+	}
+}
+
+func TestEncryptedMarkDelivered(t *testing.T) {
+	s, _, _ := openEncrypted(t)
+	now := time.Now()
+	s.AddMessage(Message{ID: id32(1), Peer: "Sam", Dir: DirOut, Body: "delivered secret", TS: now, Status: StatusQueued})
+	m, changed, err := s.MarkDelivered("Sam", id32(1))
+	if err != nil || !changed || m.Body != "delivered secret" {
+		t.Fatalf("mark delivered: %+v %v %v", m, changed, err)
+	}
+}
+
+func TestOpenWithKeyRejectsShortKey(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "chirp.db")
+	_, err := OpenWithKey(p, []byte("short"))
+	if err == nil {
+		t.Fatal("should reject short key")
+	}
+}
+
+func TestWipeAllStillWorksWithEncryption(t *testing.T) {
+	s, _, _ := openEncrypted(t)
+	id, _ := identity.Generate("Alex")
+	s.SaveIdentity(id)
+	k, _ := identity.Generate("Sam")
+	s.Observe("Sam", k.Key.Public, time.Now())
+	s.AddMessage(Message{ID: id32(1), Peer: "Sam", Dir: DirIn, Body: "wipe me", TS: time.Now(), Status: StatusReceived})
+	if err := s.DeleteAllMessages(); err != nil {
+		t.Fatal(err)
+	}
+	ms, _ := s.Messages("Sam", 10)
+	if len(ms) != 0 {
+		t.Fatal("messages not wiped")
+	}
+	if _, err := s.GetPeer("Sam"); err != nil {
+		t.Fatal("peer should survive message wipe")
 	}
 }

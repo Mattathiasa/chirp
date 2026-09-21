@@ -86,3 +86,26 @@ func TestBackupTamper(t *testing.T) {
 		t.Fatal("hostile KDF cost accepted")
 	}
 }
+
+func TestPassphraseStrength(t *testing.T) {
+	tests := []struct {
+		pw  string
+		min int
+		max int
+	}{
+		{"", 0, 0},
+		{"a", 0, 0},
+		{"abcdefgh", 0, 0},
+		{"abcdefghij", 0, 0},
+		{"abcdefghij12", 2, 2},
+		{"abcdefghij12!@", 3, 3},
+		{"Abcdefghij12!@", 4, 4},
+		{"CorrectHorseBatteryStaple!2", 5, 5},
+	}
+	for _, tc := range tests {
+		got := PassphraseStrength(tc.pw)
+		if got < tc.min || got > tc.max {
+			t.Errorf("PassphraseStrength(%q) = %d, want [%d, %d]", tc.pw, got, tc.min, tc.max)
+		}
+	}
+}

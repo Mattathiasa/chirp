@@ -1,0 +1,100 @@
+{
+  "_note": "Test vectors for Chirp protocol v2. Use to verify encode/decode and validation across implementations.",
+  "hello": {
+    "v1": {
+      "input": {"v": 1, "name": "Alice"},
+      "json": "{\"v\":1,\"name\":\"Alice\"}"
+    },
+    "v2": {
+      "input": {"v": 2, "name": "Bob", "caps": ["files", "reactions", "receipts", "typing"]},
+      "json": "{\"v\":2,\"name\":\"Bob\",\"caps\":[\"files\",\"reactions\",\"receipts\",\"typing\"]}"
+    },
+    "v2_no_caps": {
+      "input": {"v": 2, "name": "Carol"},
+      "json": "{\"v\":2,\"name\":\"Carol\"}"
+    }
+  },
+  "envelopes": {
+    "msg": {
+      "input": {"t": "msg", "id": "aabbccdd11223344aabbccdd11223344", "ts": 1700000000000, "body": "Hello, world!"},
+      "json": "{\"t\":\"msg\",\"id\":\"aabbccdd11223344aabbccdd11223344\",\"ts\":1700000000000,\"body\":\"Hello, world!\"}"
+    },
+    "msg_with_reply": {
+      "input": {"t": "msg", "id": "aabbccdd11223344aabbccdd11223344", "ts": 1700000000000, "body": "Reply here", "replyTo": "11223344aabbccdd11223344aabbccdd"},
+      "json": "{\"t\":\"msg\",\"id\":\"aabbccdd11223344aabbccdd11223344\",\"ts\":1700000000000,\"body\":\"Reply here\",\"replyTo\":\"11223344aabbccdd11223344aabbccdd\"}"
+    },
+    "ack": {
+      "input": {"t": "ack", "id": "aabbccdd11223344aabbccdd11223344"},
+      "json": "{\"t\":\"ack\",\"id\":\"aabbccdd11223344aabbccdd11223344\"}"
+    },
+    "ping": {
+      "input": {"t": "ping"},
+      "json": "{\"t\":\"ping\"}"
+    },
+    "react": {
+      "input": {"t": "react", "id": "aabbccdd11223344aabbccdd11223344", "emoji": "👍"},
+      "json": "{\"t\":\"react\",\"id\":\"aabbccdd11223344aabbccdd11223344\",\"emoji\":\"👍\"}"
+    },
+    "react_custom": {
+      "input": {"t": "react", "id": "aabbccdd11223344aabbccdd11223344", "emoji": "fire"},
+      "json": "{\"t\":\"react\",\"id\":\"aabbccdd11223344aabbccdd11223344\",\"emoji\":\"fire\"}"
+    },
+    "del": {
+      "input": {"t": "del", "id": "aabbccdd11223344aabbccdd11223344", "target": "11223344aabbccdd11223344aabbccdd"},
+      "json": "{\"t\":\"del\",\"id\":\"aabbccdd11223344aabbccdd11223344\",\"target\":\"11223344aabbccdd11223344aabbccdd\"}"
+    },
+    "delall": {
+      "input": {"t": "delall", "id": "aabbccdd11223344aabbccdd11223344", "target": "11223344aabbccdd11223344aabbccdd"},
+      "json": "{\"t\":\"delall\",\"id\":\"aabbccdd11223344aabbccdd11223344\",\"target\":\"11223344aabbccdd11223344aabbccdd\"}"
+    },
+    "typing": {
+      "input": {"t": "typing"},
+      "json": "{\"t\":\"typing\"}"
+    },
+    "read": {
+      "input": {"t": "read", "target": "11223344aabbccdd11223344aabbccdd"},
+      "json": "{\"t\":\"read\",\"target\":\"11223344aabbccdd11223344aabbccdd\"}"
+    },
+    "file": {
+      "input": {"t": "file", "id": "aabbccdd11223344aabbccdd11223344", "src": "photo.jpg", "size": 1048576, "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},
+      "json": "{\"t\":\"file\",\"id\":\"aabbccdd11223344aabbccdd11223344\",\"src\":\"photo.jpg\",\"size\":1048576,\"hash\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\"}"
+    },
+    "chunk": {
+      "input": {"t": "chunk", "id": "aabbccdd11223344aabbccdd11223344", "offset": 0, "chunk": [72, 101, 108, 108, 111]},
+      "json": "{\"t\":\"chunk\",\"id\":\"aabbccdd11223344aabbccdd11223344\",\"offset\":0,\"chunk\":\"SGVsbG8=\"}"
+    }
+  },
+  "rejection": {
+    "empty_frame": "frame with zero length header",
+    "unknown_type": {"t": "bogus"},
+    "msg_no_id": {"t": "msg", "body": "hi"},
+    "msg_empty_body": {"t": "msg", "id": "aabbccdd11223344aabbccdd11223344", "body": ""},
+    "msg_body_too_long": {"t": "msg", "id": "aabbccdd11223344aabbccdd11223344", "body": "<4097 chars>"},
+    "msg_bad_id_hex": {"t": "msg", "id": "not-hex-at-all-0000000000000000"},
+    "msg_bad_id_len": {"t": "msg", "id": "aabb"},
+    "ack_with_body": {"t": "ack", "id": "aabbccdd11223344aabbccdd11223344", "body": "unexpected"},
+    "ping_with_id": {"t": "ping", "id": "aabbccdd11223344aabbccdd11223344"},
+    "react_no_emoji": {"t": "react", "id": "aabbccdd11223344aabbccdd11223344"},
+    "del_no_target": {"t": "del", "id": "aabbccdd11223344aabbccdd11223344"},
+    "read_no_target": {"t": "read"},
+    "file_no_src": {"t": "file", "id": "aabbccdd11223344aabbccdd11223344", "size": 100, "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},
+    "file_bad_size": {"t": "file", "id": "aabbccdd11223344aabbccdd11223344", "src": "x", "size": -1, "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},
+    "file_bad_hash_len": {"t": "file", "id": "aabbccdd11223344aabbccdd11223344", "src": "x", "size": 100, "hash": "abc"},
+    "chunk_no_data": {"t": "chunk", "id": "aabbccdd11223344aabbccdd11223344", "offset": 0},
+    "chunk_negative_offset": {"t": "chunk", "id": "aabbccdd11223344aabbccdd11223344", "offset": -1, "chunk": [1]}
+  },
+  "version_negotiation": {
+    "local_2_remote_2": {"local": 2, "remote": 2, "result": 2},
+    "local_2_remote_1": {"local": 2, "remote": 1, "result": 1},
+    "local_1_remote_2": {"local": 1, "remote": 2, "result": 1},
+    "local_3_remote_2": {"local": 3, "remote": 2, "result": 2}
+  },
+  "frame": {
+    "max_frame": 65535,
+    "max_body": 4096,
+    "max_file_size": 104857600,
+    "id_len_bytes": 16,
+    "chunk_size": 65536,
+    "prologue_v2": "chirp/2"
+  }
+}

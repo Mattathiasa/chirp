@@ -9,9 +9,19 @@ import (
 
 // Event is pushed to subscribers (the SSE endpoint).
 type Event struct {
-	Type    string         `json:"type"` // "peers" | "message" | "status" | "outbox"
+	Type    string         `json:"type"` // "peers" | "message" | "status" | "outbox" | "reaction" | "typing" | "read" | "file" | "fileProgress" | "fileComplete" | "me"
 	Peer    string         `json:"peer,omitempty"`
 	Message *store.Message `json:"message,omitempty"`
+
+	// Reaction fields
+	Emoji  string `json:"emoji,omitempty"`
+	Target string `json:"target,omitempty"` // message ID being reacted to
+
+	// File transfer fields
+	FileSrc  string  `json:"fileSrc,omitempty"`
+	FileSize int64   `json:"fileSize,omitempty"`
+	FileHash string  `json:"fileHash,omitempty"`
+	Progress float64 `json:"progress,omitempty"`
 }
 
 // Subscribe returns a channel of events and a function to unsubscribe. Slow

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/Mattathiasa/chirp/internal/identity"
+	"github.com/Mattathiasa/chirp/internal/proto"
 	"github.com/Mattathiasa/chirp/internal/store"
 )
 
@@ -166,6 +167,23 @@ func (n *Node) Forget(name string) error {
 	return nil
 }
 
+// Rename changes the display name. The key stays the same; peers see the new
+// name on the next handshake.
+func (n *Node) Rename(name string) error {
+	name, err := identity.ValidateName(name)
+	if err != nil {
+		return ErrBadName
+	}
+	if err := n.cfg.Store.RenameIdentity(name); err != nil {
+		return err
+	}
+	n.mu.Lock()
+	n.id.Name = name
+	n.mu.Unlock()
+	n.emit(Event{Type: "me"})
+	return nil
+}
+
 // Messages returns recent messages with a peer.
 func (n *Node) Messages(peer string, limit int) ([]store.Message, error) {
 	return n.cfg.Store.Messages(peer, limit)
@@ -173,6 +191,65 @@ func (n *Node) Messages(peer string, limit int) ([]store.Message, error) {
 
 // Outbox returns every undelivered message.
 func (n *Node) Outbox() ([]store.Message, error) { return n.cfg.Store.Pending("") }
+
+// Search performs full-text search over all messages.
+func (n *Node) Search(query string, limit int) ([]store.SearchResult, error) {
+	return n.cfg.Store.Search(query, limit)
+}
+
+// DeleteMessage removes a message locally (delete-for-me).
+func (n *Node) DeleteMessage(id string) error {
+	if err := n.cfg.Store.DeleteMessage(id); err != nil {
+		return err
+	}
+	n.emit(Event{Type: "peers"})
+	return nil
+}
+
+// SendReaction sends an emoji reaction to a message.
+func (n *Node) SendReaction(peer, emoji, targetID string) error {
+	l := n.linkFor(peer)
+	if l == nil {
+		return ErrUnknownPeer
+	}
+	return l.send(proto.Envelope{T: proto.TypeReact, Emoji: emoji, Target: targetID})
+}
+
+// SendTyping sends a typing indicator (ephemeral, not persisted).
+func (n *Node) SendTyping(peer string) error {
+	l := n.linkFor(peer)
+	if l == nil {
+		return ErrUnknownPeer
+	}
+	return l.send(proto.Envelope{T: proto.TypeTyping})
+}
+
+// SendReadReceipt sends a read receipt for a message.
+func (n *Node) SendReadReceipt(peer, targetID string) error {
+	l := n.linkFor(peer)
+	if l == nil {
+		return ErrUnknownPeer
+	}
+	return l.send(proto.Envelope{T: proto.TypeRead, Target: targetID})
+}
+
+// DeleteMessageForEveryone sends a delete-for-everyone request (best effort).
+func (n *Node) DeleteMessageForEveryone(peer, targetID string) error {
+	l := n.linkFor(peer)
+	if l == nil {
+		return ErrUnknownPeer
+	}
+	return l.send(proto.Envelope{T: proto.TypeDelAll, ID: targetID})
+}
+
+// RemoteCaps returns the capabilities of a connected peer, or nil if offline.
+func (n *Node) RemoteCaps(peer string) []string {
+	l := n.linkFor(peer)
+	if l == nil {
+		return nil
+	}
+	return l.conn.RemoteCaps
+}
 
 // Session is a live link for diagnostics.
 type Session struct {
