@@ -73,23 +73,35 @@
 
 Rooms use **fan-out of one pairwise-encrypted copy per member**. There is no shared group key. Each message is encrypted separately to each member's Noise session, so forward secrecy properties come from the pairwise sessions. The cost is O(n) bandwidth per message, which is acceptable for LAN sizes (capped at 32 members).
 
+### What authorises a membership change
+
+Membership events are **not signed**. They arrive over an authenticated Noise session, so the sender's identity is the pinned name on the link, and that identity — never the `roomActor` field, which is attacker-controlled — is what the receiver authorises against. This is strictly weaker than signed events in one respect: it is hop-by-hop, so a member learns of a change only from a peer entitled to make it, and there is nothing to relay through a third party. Given creator-only administration and a direct session to every member, there is nothing a signature would add here, and a signing key would be one more thing to get wrong.
+
+Concretely: only the creator may add, remove or rename; any member may announce their own departure; and a `create` event for a room that already exists is accepted only from the peer that already owns it. Without that last rule any member could re-`create` a room, name themselves its creator on every other device, and thereby acquire the right to rename it and remove everyone else.
+
+`roommsg`, `roomack` and reactions are accepted only for a room we hold and only from a current member, so a removed member is rejected on receipt rather than merely dropped from the send list.
+
 ### What an ex-member retains
 
-When a member is removed from a room (or leaves), they retain all messages they received while they were a member. There is no cryptographic erasure: the messages are encrypted to their session key and they can decrypt them forever. This is inherent to the fan-out design and is documented in the UI.
+A member who is removed, or who leaves, keeps every message they received while they were in the room. There is no cryptographic erasure: those messages were encrypted to their own session and they can decrypt them forever. This is inherent to fan-out and no group-key scheme without a rekey-on-removal step would do better. Removal stops the flow; it does not reach backwards.
 
 ### What a malicious creator can do
 
-The creator is the only admin in v1. A malicious creator can:
-- Add any pinned peer to the room without their consent (they receive a "create" event).
-- Remove any member at any time.
-- Rename the room at any time.
-- Transfer ownership by leaving (ownership goes to the first remaining member in sorted order).
+The creator is the only admin. A malicious creator can:
+- Invite any pinned peer. They **cannot** put someone in a room: an invitation is pending until the invitee accepts it, and a pending room stores nothing, sends nothing and cannot be opened.
+- Remove any member at any time, and rename the room at any time.
+- Transfer ownership by leaving; it goes to the first remaining member in sorted order.
+- See everything any member sends to the room, which is true of every member.
 
 A malicious creator **cannot**:
-- Read messages from members who have not joined (no shared key).
-- Forge messages as another member (each message is signed by the sender's Noise session).
-- Decrypt messages sent to other members (pairwise encryption).
+- Make anyone join. Declining deletes the room locally and tells the room you are out.
+- Forge a message as another member: the sender of a `roommsg` is the authenticated identity on the link, not a field in the envelope.
+- Read what members send to each other outside the room, or decrypt another member's copy of a room message.
 
-### Why unverified members show a warning
+### Ordering
 
-Unverified members (pinned but not verified out-of-band) could be impersonated by an active attacker who has compromised the TOFU pin. The UI shows a warning badge on rooms containing unverified members so the user can make an informed trust decision before sharing sensitive content.
+Each sender stamps its own durable per-room counter on `seq`, so within one sender's stream the order is gapless and survives restarts. **There is no global order across senders.** Two members sending at the same instant have no defined relative order, and each receiver falls back to its own arrival time for display. Device clocks are not synchronised, so the sender's timestamp cannot be used for ordering either. This is a deliberate limit: a total order would need either a coordinator, which there is none of, or vector clocks, which are not worth their cost at LAN sizes.
+
+### Why unverified members are called out
+
+An unverified member is pinned but never checked out of band, so an active attacker who was present at first contact could be holding that name. Everyone in a room sees everything sent to it, so the invitation card names exactly which members are unverified before you accept, and the members panel keeps flagging them afterwards.
