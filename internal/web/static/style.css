@@ -111,7 +111,10 @@
   /* Bold editorial: ink and paper, cobalt for my messages, tangerine for actions */
   --ink: #0C0C14; --ink2: #1A1A26; --paper: #ECEDF4; --paper2: #DFE1EC; --white: #FBFBFE;
   --cobalt: #2A3BFF; --tang: #FF5A36; --butter: #FFD84A; --mint: #5EE2A4; --pink: #FF9EC7; --lilac: #C7B8FF;
-  --mute: #5A5B6E; --rule: #C9CCDC; --red: #E5323B;
+  --mute: #5A5B6E; --rule: #C9CCDC;
+  /* #E5323B failed WCAG AA both as text on paper (3.7:1) and behind white
+     on the danger button (4.3:1). This clears 4.5:1 in both directions. */
+  --red: #C81E27;
   /* aliases used by app.js */
   --accent: var(--tang); --accent-ink: var(--ink); --ok: #0B7A4B; --bad: var(--red); --bad-ink: #fff; --bad-bg: var(--red); --bad-line: var(--ink);
   --display: "Bricolage Grotesque", "Helvetica Neue", ui-sans-serif, system-ui, "Segoe UI", Arial, sans-serif;
@@ -155,8 +158,13 @@ h1, h2, h3 { font-family: var(--display); font-weight: 800; letter-spacing: -.04
 .brand { display: flex; align-items: center; gap: 10px; padding: 18px; font: 800 24px var(--display); letter-spacing: -.05em; }
 .brand .ver { font: 400 11px var(--mono); letter-spacing: 0; margin-left: auto; }
 .sh { display: flex; align-items: center; gap: 10px; padding: 20px 20px 8px; }
+.sh .chip { min-width: 84px; justify-content: center; }
 .sh h1 { font-size: 52px; line-height: .9; letter-spacing: -.05em; }
-.narrow-only { display: none; gap: 6px; }
+/* No wrapping: the online count changes as peers come and go, and a wrapping
+   header made the navigation buttons jump as it did. */
+.narrow-only { display: none; gap: 6px; flex: none; }
+/* The scrolling half of the conversation pane; the header above it is fixed. */
+.side-body { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
 .iconbtn.sm { width: 36px; height: 36px; border-radius: 12px; }
 .searchwrap { display: flex; align-items: center; gap: 8px; margin: 8px 20px; padding: 0 16px; height: 48px; border-radius: 16px; background: var(--white); border: 2px solid var(--ink); color: var(--mute); }
 .searchwrap:focus-within { border-color: var(--cobalt); box-shadow: 0 4px 0 var(--cobalt); }
@@ -376,6 +384,28 @@ p { margin: 0; }
 /* The invite QR. It is inline SVG, so it scales without a raster asset. */
 .qr { display: flex; justify-content: center; margin: 14px 0; }
 .qr svg { width: 100%; max-width: 260px; height: auto; border: 2px solid var(--ink); border-radius: 16px; }
+
+/* ---------- narrow widths for the newer surfaces ---------- */
+@media (max-width: 760px) {
+  /* The palette becomes a sheet rather than a floating box. */
+  .modal.palette { max-width: none; border-radius: 20px 20px 0 0; }
+  .pal-results { max-height: 60vh; }
+  .pal-hint { display: none; }
+  .pal-k { display: none; }
+
+  .radar { max-width: 260px; }
+  .blip { width: 36px; height: 36px; }
+  .qr svg { max-width: 220px; }
+
+  /* Reaction chips wrap rather than pushing the bubble out of the pane. */
+  .reacts { max-width: 100%; }
+  .replying { padding: 10px 12px; }
+}
+
+/* Nothing may push the page sideways: wide content scrolls inside itself. */
+.page, .col { max-width: 100%; }
+.fp, .words { overflow-wrap: anywhere; }
+
 
 
 

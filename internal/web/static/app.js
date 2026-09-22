@@ -265,16 +265,19 @@ function refreshNetworkSoon() { clearTimeout(netTimer); netTimer = setTimeout(as
 
 // ---------- layout ----------
 let $shell, $rail, $nav, $side, $main, $panel, composer, $ta, $sendBtn, $search;
+let $sideHead, $sideOnline, $sideSearch, $sideBody;
 
 function mountShell() {
   $app.replaceChildren();
+  $sideHead = $sideOnline = $sideSearch = $sideBody = null;
+  lastSideSig = null;
   $rail = h('nav', { class: 'rail', 'aria-label': 'Sections' });
   $nav = h('aside', { class: 'nav pane', 'aria-label': 'Navigation' });
   $side = h('aside', { class: 'side pane', 'aria-label': 'Conversations' });
   $main = h('main', { class: 'main pane' });
   $panel = h('aside', { class: 'panel', 'aria-label': 'Trust details' });
   $search = h('input', { type: 'search', class: 'search', placeholder: 'Search', 'aria-label': 'Search people', autocomplete: 'off' });
-  $search.addEventListener('input', () => { S.q = $search.value; renderSide(); });
+  $search.addEventListener('input', () => { S.q = $search.value; renderSide(true); });
   $shell = h('div', { class: 'stage' }, $rail, h('div', { class: 'window' }, $nav, $side, $main, $panel));
   $app.append($shell);
   buildComposer();
@@ -556,7 +559,7 @@ function renderRail() {
   $rail.replaceChildren(
     h('span', { class: 'logo' }, logoSvg()),
     btn('people', 'Chats', S.view === 'chat', () => setView('chat'), unreadCount() || null),
-    btn('wifi', 'Network and outbox', S.view === 'network', () => setView('network'), q || null),
+    btn('wifi', 'Network', S.view === 'network', () => setView('network'), q || null),
     btn('gear', 'Settings', S.view === 'settings', () => setView('settings')),
     h('span', { class: 'grow' }),
     S.me ? h('button', { class: 'rbtn', 'aria-label': 'My identity', title: 'My identity', onclick: showIdentity }, avatar({ name: S.me.name, identicon: S.me.identicon }, 36, false)) : null);
@@ -589,7 +592,24 @@ function renderNav() {
 }
 
 // ---------- middle pane: search, online strip, conversations ----------
-function renderSide() {
+// Everything renderSide and renderNav draw, reduced to a string. The panes were
+// rebuilt on every peer poll and every SSE event, which made the list flicker,
+// dropped focus out of whatever was under the pointer, and detached buttons
+// mid-click. Redraw only when something actually changed.
+function sideSignature() {
+  return JSON.stringify([
+    S.view, S.cur, S.roomCur, S.q, S.connected, S.unread, S.me && S.me.name,
+    S.peers.map((p) => [p.name, p.online, p.nearby, p.trust, p.queued, p.last && p.last.id]),
+    S.rooms.map((r) => [r.id, r.name, r.state, r.unread, r.lastMsg && r.lastMsg.id,
+      r.members.map((m) => [m.name, m.online])]),
+  ]);
+}
+let lastSideSig = null;
+
+function renderSide(force) {
+  const sig = sideSignature();
+  if (!force && sig === lastSideSig && $side && $side.childElementCount) return;
+  lastSideSig = sig;
   renderRail(); renderNav();
   if (!$side) return;
   const needle = (S.q || '').trim().toLowerCase();
@@ -630,16 +650,34 @@ function renderSide() {
   const strip = online.length ? h('div', { class: 'strip', 'aria-label': 'Online now' }, online.map((p) =>
     h('button', { class: 'sitem', onclick: () => openPeer(p.name), 'aria-label': `Open chat with ${p.name}` }, avatar(p, 52), h('span', {}, p.name.split(' ')[0])))) : null;
 
-  $side.replaceChildren(
-    h('div', { class: 'sh' }, h('h1', {}, 'Chats'),
-      h('span', { class: 'chip' }, `${S.peers.filter((p) => p.online).length} online`),
+  // The header carries the only navigation there is at narrow widths, so it is
+  // built once and kept. Rebuilding it on every peer update detached whatever
+  // button was being pressed.
+  if (!$sideHead) {
+    $sideOnline = h('span', { class: 'chip' });
+    $sideHead = h('div', { class: 'sh' }, h('h1', {}, 'Chats'),
+      $sideOnline,
       h('span', { class: 'grow' }),
       h('span', { class: 'narrow-only' },
-        h('button', { class: 'iconbtn sm', 'aria-label': 'Network and outbox', onclick: () => setView('network') }, icon('wifi', 18)),
+        h('button', { class: 'iconbtn sm', 'aria-label': 'Search everything', onclick: openPalette }, icon('search', 18)),
+        h('button', { class: 'iconbtn sm', 'aria-label': 'Rooms', onclick: () => setView('rooms') }, icon('users', 18)),
+        h('button', { class: 'iconbtn sm', 'aria-label': 'Nearby', onclick: () => setView('nearby') }, icon('wifi', 18)),
+        h('button', { class: 'iconbtn sm', 'aria-label': 'Network', onclick: () => setView('network') }, icon('refresh', 18)),
         h('button', { class: 'iconbtn sm', 'aria-label': 'Settings', onclick: () => setView('settings') }, icon('gear', 18)),
-        S.me ? h('button', { class: 'iconbtn sm', 'aria-label': 'My identity', onclick: showIdentity }, icon('key', 18)) : null)),
-    h('div', { class: 'searchwrap' }, icon('search', 18), $search),
-    strip,
+        h('button', { class: 'iconbtn sm', 'aria-label': 'My identity', onclick: showIdentity }, icon('key', 18))));
+    $sideSearch = h('div', { class: 'searchwrap' }, icon('search', 18), $search);
+  }
+  $sideOnline.textContent = `${S.peers.filter((p) => p.online).length} online`;
+
+  // Only the volatile part is replaced. The header and the filter box stay put,
+  // so a button being pressed is never moved out from under the pointer and the
+  // filter box never loses focus mid-typing.
+  if (!$side.contains($sideHead)) {
+    $sideBody = h('div', { class: 'side-body' });
+    $side.replaceChildren($sideHead, $sideSearch, $sideBody);
+  }
+  $sideBody.replaceChildren(
+    ...[strip].filter(Boolean),
     h('div', { class: 'list' },
       people.length ? [h('div', { class: 'section' }, 'Your people'), ...people.map(rowFor)] : null,
       nearby.length ? [h('div', { class: 'section' }, 'Nearby'), ...nearby.map(rowFor)] : null,
@@ -1051,9 +1089,11 @@ function viewNearby() {
   const back = h('button', { class: 'back', onclick: () => setView('chat'), 'aria-label': 'Back' }, icon('back', 24));
   const seen = S.peers.filter((p) => p.nearby || p.online);
 
-  const radar = h('div', { class: 'radar', role: 'img', 'aria-label': `${seen.length} device${seen.length === 1 ? '' : 's'} found nearby` },
-    h('i', {}), h('i', {}), h('i', {}),
-    h('span', { class: 'radar-me' }, logoSvg()),
+  // A group, not an image: it contains real buttons, and role="img" would make
+  // them unreachable to a screen reader.
+  const radar = h('div', { class: 'radar', role: 'group', 'aria-label': `${seen.length} device${seen.length === 1 ? '' : 's'} found nearby` },
+    h('i', { 'aria-hidden': 'true' }), h('i', { 'aria-hidden': 'true' }), h('i', { 'aria-hidden': 'true' }),
+    h('span', { class: 'radar-me', 'aria-hidden': 'true' }, logoSvg()),
     ...seen.slice(0, 8).map((p, i) => {
       // Fixed positions around the rings, so a peer does not jump on redraw.
       const angle = (i / Math.max(seen.length, 1)) * Math.PI * 2 - Math.PI / 2;

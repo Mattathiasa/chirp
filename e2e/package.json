@@ -1,0 +1,12 @@
+{
+  "name": "chirp-e2e",
+  "private": true,
+  "description": "End-to-end tests for the Chirp web UI, driven against cmd/demo.",
+  "scripts": {
+    "test": "playwright test"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "^4.10.0",
+    "@playwright/test": "^1.49.0"
+  }
+}

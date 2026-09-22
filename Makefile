@@ -1,4 +1,4 @@
-.PHONY: build run demo test race fuzz vet fmt lint vuln clean
+.PHONY: build run demo test race fuzz vet fmt lint vuln e2e e2e-install clean
 
 BIN     := bin
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
@@ -31,6 +31,12 @@ fmt:
 
 vuln:
 	go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+
+e2e-install:      ## one-off: fetch Playwright and its browser
+	cd e2e && npm ci && npx playwright install --with-deps chromium
+
+e2e: build        ## drive the real UI against cmd/demo, desktop and phone
+	cd e2e && npx playwright test
 
 clean:
 	rm -rf $(BIN)
