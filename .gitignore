@@ -17,3 +17,6 @@ go.sandbox.sum
 .idea/
 .vscode/
 .DS_Store
+
+# local working brief, not part of the project
+chirp-build-prompt.md
