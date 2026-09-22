@@ -15,6 +15,7 @@ import (
 type RoomView struct {
 	ID        string             `json:"id"`
 	Name      string             `json:"name"`
+	State     string             `json:"state"`
 	Members   []RoomMemberView   `json:"members"`
 	CreatedBy string             `json:"createdBy"`
 	CreatedAt time.Time          `json:"createdAt"`
@@ -62,6 +63,7 @@ func (n *Node) CreateRoom(name string, memberNames []string) (*store.Room, error
 		Members:   members,
 		CreatedBy: n.id.Name,
 		CreatedAt: time.Now(),
+		State:     store.RoomJoined,
 	}
 
 	if err := n.cfg.Store.CreateRoom(room); err != nil {
@@ -95,6 +97,7 @@ func (n *Node) Rooms() ([]RoomView, error) {
 		rv := RoomView{
 			ID:        r.ID,
 			Name:      r.Name,
+			State:     r.State,
 			CreatedBy: r.CreatedBy,
 			CreatedAt: r.CreatedAt,
 			Members:   make([]RoomMemberView, 0, len(r.Members)),
@@ -128,6 +131,7 @@ func (n *Node) GetRoom(id string) (*RoomView, error) {
 	rv := &RoomView{
 		ID:        r.ID,
 		Name:      r.Name,
+		State:     r.State,
 		CreatedBy: r.CreatedBy,
 		CreatedAt: r.CreatedAt,
 		Members:   make([]RoomMemberView, 0, len(r.Members)),
@@ -168,6 +172,9 @@ func (n *Node) SendRoomMessage(roomID, body string) (*store.RoomMessage, error) 
 	// Verify sender is a member.
 	if !isMember(r.Members, n.id.Name) {
 		return nil, errors.New("node: not a member of this room")
+	}
+	if r.Pending() {
+		return nil, ErrRoomPending
 	}
 
 	msgID, err := proto.NewID(rand.Reader)
@@ -398,6 +405,9 @@ func (n *Node) SendRoomReaction(roomID, msgID, emoji string) error {
 	if !isMember(r.Members, n.id.Name) {
 		return errors.New("node: not a member of this room")
 	}
+	if r.Pending() {
+		return ErrRoomPending
+	}
 
 	m, changed, err := n.cfg.Store.ToggleRoomReaction(roomID, msgID, n.id.Name, emoji)
 	if err != nil {
@@ -432,8 +442,8 @@ func (n *Node) handleRoomReaction(l *link, e proto.Envelope) {
 		n.logf("room reaction dropped: unknown room %s from %s", e.Room, l.peer)
 		return
 	}
-	if !isMember(r.Members, l.peer) || !isMember(r.Members, n.id.Name) {
-		n.logf("room reaction dropped: %q is not a member of %s", l.peer, e.Room)
+	if !isMember(r.Members, l.peer) || !isMember(r.Members, n.id.Name) || r.Pending() {
+		n.logf("room reaction dropped: %q is not a member of %s, or we have not joined", l.peer, e.Room)
 		return
 	}
 	m, changed, err := n.cfg.Store.ToggleRoomReaction(e.Room, e.Target, l.peer, e.Emoji)
@@ -457,6 +467,59 @@ func speaksRooms(l *link) bool {
 		}
 	}
 	return false
+}
+
+// AcceptRoomInvite joins a room we were invited to. Anything the other members
+// said in the meantime is still in their outboxes and arrives on the next
+// retry.
+func (n *Node) AcceptRoomInvite(roomID string) error {
+	r, err := n.cfg.Store.GetRoom(roomID)
+	if err != nil {
+		return err
+	}
+	if !r.Pending() {
+		return nil // already joined; accepting twice is harmless
+	}
+	if !isMember(r.Members, n.id.Name) {
+		return errors.New("node: not a member of this room")
+	}
+	r.State = store.RoomJoined
+	if err := n.cfg.Store.UpdateRoom(*r); err != nil {
+		return err
+	}
+	n.emit(Event{Type: "room"})
+
+	// Tell the others we are in, so they stop showing us as unanswered.
+	for _, mb := range r.Members {
+		if mb == n.id.Name {
+			continue
+		}
+		n.sendRoomEvent(mb, roomID, "join", n.id.Name, "", nil)
+	}
+	return nil
+}
+
+// DeclineRoomInvite refuses an invitation: tell the room we are leaving, then
+// delete every trace of it locally.
+func (n *Node) DeclineRoomInvite(roomID string) error {
+	r, err := n.cfg.Store.GetRoom(roomID)
+	if err != nil {
+		return err
+	}
+	if !r.Pending() {
+		return errors.New("node: this room has already been joined; leave it instead")
+	}
+	for _, mb := range r.Members {
+		if mb == n.id.Name {
+			continue
+		}
+		n.sendRoomEvent(mb, roomID, "leave", n.id.Name, "", nil)
+	}
+	if err := n.cfg.Store.DeleteRoom(roomID); err != nil {
+		return err
+	}
+	n.emit(Event{Type: "room"})
+	return nil
 }
 
 // flushRoomMember sends pending room messages to a specific member.
@@ -561,6 +624,13 @@ func (n *Node) handleRoomMsg(l *link, e proto.Envelope) {
 		n.logf("room msg dropped: we are not a member of %s", e.Room)
 		return
 	}
+	if r.Pending() {
+		// The invitation has not been answered. Drop without acking: the
+		// sender's outbox keeps retrying, so anything said before we accept
+		// arrives once we do.
+		n.logf("room msg held: invitation to %s not accepted yet", e.Room)
+		return
+	}
 	m := store.RoomMessage{
 		ID:     e.ID,
 		Room:   e.Room,
@@ -654,12 +724,15 @@ func (n *Node) handleRoomEvent(l *link, e proto.Envelope) {
 		} else {
 			// First sight of this room. The peer that told us about it is its
 			// creator by definition; it cannot nominate somebody else.
+			// Somebody else is putting us in a room. That is an invitation,
+			// not a fait accompli: hold it pending until the user answers.
 			room := store.Room{
 				ID:        e.Room,
 				Name:      e.RoomName,
 				Members:   members,
 				CreatedBy: actor,
 				CreatedAt: time.UnixMilli(e.TS),
+				State:     store.RoomPending,
 			}
 			if err := n.cfg.Store.CreateRoom(room); err != nil {
 				n.logf("room create: %v", err)
@@ -673,11 +746,25 @@ func (n *Node) handleRoomEvent(l *link, e proto.Envelope) {
 		if err != nil {
 			return
 		}
+		// A member announcing their own arrival is how an accepted invitation
+		// comes back. They are already on the list, so there is nothing to
+		// change; it only refreshes the view.
+		if strings.EqualFold(actor, e.RoomActor) {
+			if isMember(r.Members, actor) {
+				n.emit(Event{Type: "room"})
+			}
+			return
+		}
+		// Anyone else adding a member must be the creator.
 		if actor != r.CreatedBy {
 			n.logf("room join rejected: %q is not the creator", actor)
 			return
 		}
 		if isMember(r.Members, e.RoomActor) {
+			return
+		}
+		if len(r.Members) >= store.MaxRoomMembers {
+			n.logf("room join rejected: room %s is full", e.Room)
 			return
 		}
 		r.Members = append(r.Members, e.RoomActor)

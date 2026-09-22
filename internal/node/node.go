@@ -34,6 +34,7 @@ var (
 	ErrKeyChanged  = errors.New("node: peer key changed; review it before sending")
 	ErrBadBody     = errors.New("node: message must be 1-4096 bytes of valid UTF-8")
 	ErrBadName     = errors.New("node: invalid display name")
+	ErrRoomPending = errors.New("node: accept the invitation to this room first")
 )
 
 // Config configures a Node.

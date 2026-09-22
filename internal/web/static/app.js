@@ -293,12 +293,46 @@ function roomColor(id) {
 function roomInitials(name) {
   return String(name || '?').trim().split(/\s+/).slice(0, 2).map((w) => w[0] || '').join('').toUpperCase() || '?';
 }
-const roomUnread = () => S.rooms.reduce((a, r) => a + (S.unread['r:' + r.id] || 0), 0);
+const roomUnread = () => S.rooms.reduce((a, r) => a + (S.unread['r:' + r.id] || 0), 0) + invites().length;
 const curRoom = () => S.rooms.find((r) => r.id === S.roomCur);
+const invites = () => S.rooms.filter((r) => r.state === 'pending');
+const joinedRooms = () => S.rooms.filter((r) => r.state !== 'pending');
+
+async function answerInvite(id, accept) {
+  try {
+    await api('POST', `/api/rooms/${enc(id)}/${accept ? 'accept' : 'decline'}`);
+    if (!accept && S.roomCur === id) S.roomCur = null;
+    await loadRooms();
+    toast(accept ? 'Joined the room' : 'Invitation declined');
+  } catch (e) { toast(e.message, true); }
+}
+
+// An invitation names people you may not have verified, so it says who is in
+// the room and who invited you before you agree to anything.
+function inviteCard(r) {
+  const others = r.members.filter((m) => m.name !== S.me.name).map((m) => m.name);
+  const unverified = others.filter((name) => {
+    const p = peerByName(name);
+    return !p || p.trust !== 'verified';
+  });
+  return h('div', { class: 'card invite' },
+    h('div', { style: 'display:flex;gap:14px;align-items:center' },
+      h('span', { class: 'av' }, h('b', { style: `border-radius:18px;background:${roomColor(r.id)}` }, roomInitials(r.name))),
+      h('div', { class: 'grow' },
+        h('h3', { style: 'margin:0' }, r.name),
+        h('div', { class: 'n' }, `${r.createdBy} invited you · with ${others.join(', ')}`))),
+    unverified.length
+      ? h('div', { class: 'banner warn' }, icon('warn', 20),
+        h('div', { class: 'grow' }, `You have not verified ${unverified.join(', ')}. Everyone in this room sees everything you send to it.`))
+      : null,
+    h('div', { style: 'display:flex;gap:10px' },
+      h('button', { class: 'btn primary', onclick: () => answerInvite(r.id, true) }, icon('check', 18), 'Join'),
+      h('button', { class: 'btn', onclick: () => answerInvite(r.id, false) }, 'Decline')));
+}
 
 function viewRooms() {
   const back = h('button', { class: 'back', onclick: () => setView('chat'), 'aria-label': 'Back' }, icon('back', 24));
-  const rows = S.rooms.map((r) => h('button', { class: 'ob', style: 'width:100%;text-align:left', onclick: () => openRoom(r.id) },
+  const rows = joinedRooms().map((r) => h('button', { class: 'ob', style: 'width:100%;text-align:left', onclick: () => openRoom(r.id) },
     h('span', { class: 'av' }, h('b', { style: `border-radius:18px;background:${roomColor(r.id)}` }, roomInitials(r.name))),
     h('div', { class: 'grow' },
       h('div', { class: 't' }, r.name),
@@ -308,6 +342,7 @@ function viewRooms() {
       h('span', { style: 'flex:1' }),
       h('button', { class: 'btn primary', onclick: showCreateRoom }, icon('plus', 18), 'New room')),
     h('p', { class: 'muted' }, 'A room sends one separately encrypted copy of every message to each member. There is no shared group key, so anyone who leaves keeps only what they already received.'),
+    ...invites().map(inviteCard),
     rows.length ? h('div', { class: 'card' }, ...rows)
       : h('div', { class: 'empty' },
         h('div', { class: 'art' }, h('span', { style: 'color:var(--accent)' }, icon('users', 44))),
@@ -506,7 +541,7 @@ function renderSide() {
   const nearby = S.peers.filter((p) => p.trust === 'unknown' && match(p));
   const online = S.peers.filter((p) => p.online && match(p));
   const roomMatch = (r) => !needle || r.name.toLowerCase().includes(needle);
-  const roomRows = S.rooms.filter(roomMatch).map((r) => {
+  const roomRows = joinedRooms().filter(roomMatch).map((r) => {
     const last = r.lastMsg;
     const who = last ? (last.sender === S.me.name ? 'You' : last.sender) : '';
     const preview = last ? `${who}: ${last.body}` : 'No messages yet';
@@ -517,6 +552,12 @@ function renderSide() {
         h('span', { class: 'sub' }, preview)),
       h('span', { class: 'meta' }, last ? fmtTime(last.ts) : '', (r.unread || 0) ? h('span', { class: 'badge' }, r.unread) : null));
   });
+  const inviteRows = invites().filter(roomMatch).map((r) => h('button', { class: 'row', onclick: () => setView('rooms') },
+    h('span', { class: 'av' }, h('b', { style: `border-radius:18px;background:${roomColor(r.id)}` }, roomInitials(r.name))),
+    h('span', { class: 'grow' },
+      h('span', { class: 'name' }, r.name),
+      h('span', { class: 'sub warn' }, `${r.createdBy} invited you`)),
+    h('span', { class: 'meta' }, h('span', { class: 'badge' }, '!'))));
   const rowFor = (p) => {
     const un = S.unread[p.name.toLowerCase()] || 0;
     const preview = p.trust === 'changed' ? 'Key changed. Review before chatting.'
@@ -545,6 +586,7 @@ function renderSide() {
     h('div', { class: 'list' },
       people.length ? [h('div', { class: 'section' }, 'Your people'), ...people.map(rowFor)] : null,
       nearby.length ? [h('div', { class: 'section' }, 'Nearby'), ...nearby.map(rowFor)] : null,
+      inviteRows.length ? [h('div', { class: 'section' }, 'Invitations'), ...inviteRows] : null,
       roomRows.length ? [h('div', { class: 'section' }, 'Rooms'), ...roomRows] : null,
       !S.peers.length && !S.rooms.length ? h('div', { class: 'empty' },
         h('div', { class: 'art' }, h('span', { style: 'color:var(--accent)' }, icon('wifi', 44))),
@@ -574,6 +616,8 @@ async function openPeer(name) {
   $ta.focus();
 }
 async function openRoom(id) {
+  const inv = S.rooms.find((x) => x.id === id);
+  if (inv && inv.state === 'pending') { S.view = 'rooms'; S.roomCur = null; return renderMain(); }
   S.roomCur = id; S.cur = null; S.view = 'rooms'; S.unread['r:' + id] = 0;
   try { S.msgs = await getJSON(`/api/rooms/${enc(id)}/messages`); } catch { /* ignore */ }
   $ta.value = S.draft['r:' + id] || '';

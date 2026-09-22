@@ -2,6 +2,7 @@ package node
 
 import (
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -10,6 +11,34 @@ import (
 	"github.com/Mattathiasa/chirp/internal/proto"
 	"github.com/Mattathiasa/chirp/internal/store"
 )
+
+// acceptAll answers every outstanding room invitation on a node. Most tests
+// care about what happens after the invitation is accepted, not about the
+// consent step itself, which TestRoomInvite* cover directly.
+func acceptAll(t *testing.T, n *Node) {
+	t.Helper()
+	rooms, err := n.Rooms()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range rooms {
+		if r.State == store.RoomPending {
+			if err := n.AcceptRoomInvite(r.ID); err != nil {
+				t.Fatalf("accept %s: %v", r.ID, err)
+			}
+		}
+	}
+}
+
+// seesRoom waits until a node has been offered a room, then accepts it.
+func joinRoom(t *testing.T, n *Node, want int) {
+	t.Helper()
+	waitFor(t, "room invitation arrives", func() bool {
+		rooms, _ := n.Rooms()
+		return len(rooms) >= want
+	})
+	acceptAll(t, n)
+}
 
 func TestTwoNodeRoom(t *testing.T) {
 	hub := discovery.NewHub()
@@ -30,6 +59,8 @@ func TestTwoNodeRoom(t *testing.T) {
 		rooms, _ := bob.n.Rooms()
 		return len(rooms) == 1
 	})
+	acceptAll(t, bob.n)
+	acceptAll(t, bob.n)
 
 	msg, err := alice.n.SendRoomMessage(room.ID, "Hello room!")
 	if err != nil {
@@ -83,10 +114,14 @@ func TestThreeNodeRoom(t *testing.T) {
 		rooms, _ := bob.n.Rooms()
 		return len(rooms) == 1
 	})
+	acceptAll(t, bob.n)
+	acceptAll(t, bob.n)
 	waitFor(t, "carol sees room", func() bool {
 		rooms, _ := carol.n.Rooms()
 		return len(rooms) == 1
 	})
+	acceptAll(t, carol.n)
+	acceptAll(t, carol.n)
 
 	// Wait for session links to settle after room-create events propagate.
 	time.Sleep(time.Second)
@@ -150,6 +185,8 @@ func TestRoomMemberRemoved(t *testing.T) {
 		rooms, _ := bob.n.Rooms()
 		return len(rooms) == 1
 	})
+	acceptAll(t, bob.n)
+	acceptAll(t, bob.n)
 
 	alice.n.SendRoomMessage(room.ID, "before removal") //nolint:errcheck
 	waitFor(t, "bob gets message", func() bool {
@@ -191,6 +228,8 @@ func TestRoomLeave(t *testing.T) {
 		rooms, _ := bob.n.Rooms()
 		return len(rooms) == 1
 	})
+	acceptAll(t, bob.n)
+	acceptAll(t, bob.n)
 
 	if err := bob.n.LeaveRoom(room.ID); err != nil {
 		t.Fatal(err)
@@ -221,6 +260,7 @@ func TestRoomRename(t *testing.T) {
 		rooms, _ := bob.n.Rooms()
 		return len(rooms) == 1 && rooms[0].Name == "Original"
 	})
+	acceptAll(t, bob.n)
 
 	if err := alice.n.RenameRoom(room.ID, "Renamed"); err != nil {
 		t.Fatal(err)
@@ -248,6 +288,8 @@ func TestRoomOfflineReceivesOnRejoin(t *testing.T) {
 		rooms, _ := bob.n.Rooms()
 		return len(rooms) == 1
 	})
+	acceptAll(t, bob.n)
+	acceptAll(t, bob.n)
 
 	alice.n.SendRoomMessage(room.ID, "msg1") //nolint:errcheck
 	waitFor(t, "bob gets msg1", func() bool {
@@ -299,6 +341,8 @@ func TestRoomNotMemberCannotSend(t *testing.T) {
 		rooms, _ := bob.n.Rooms()
 		return len(rooms) == 1
 	})
+	acceptAll(t, bob.n)
+	acceptAll(t, bob.n)
 
 	if _, err := carol.n.SendRoomMessage(room.ID, "I'm not in this room"); err == nil {
 		t.Fatal("expected error for non-member sending")
@@ -321,6 +365,8 @@ func TestRoomDeliveryStatus(t *testing.T) {
 		rooms, _ := bob.n.Rooms()
 		return len(rooms) == 1
 	})
+	acceptAll(t, bob.n)
+	acceptAll(t, bob.n)
 
 	if _, err := alice.n.SendRoomMessage(room.ID, "check status"); err != nil {
 		t.Fatal(err)
@@ -355,6 +401,8 @@ func TestRoomEventForgedByNonCreator(t *testing.T) {
 		rooms, _ := bob.n.Rooms()
 		return len(rooms) == 1
 	})
+	acceptAll(t, bob.n)
+	acceptAll(t, bob.n)
 
 	// Bob opens a fresh authenticated session to Alice and forges events.
 	sc := rawSession(t, alice.n.ln.Addr().String(), bob.id)
@@ -409,6 +457,8 @@ func TestRoomCreateEventCannotSeizeAnExistingRoom(t *testing.T) {
 		rooms, _ := bob.n.Rooms()
 		return len(rooms) == 1
 	})
+	acceptAll(t, bob.n)
+	acceptAll(t, bob.n)
 
 	// Bob re-sends "create" for Alice's room, naming himself the creator and
 	// rewriting the membership.
@@ -457,6 +507,8 @@ func TestRoomMessageFromNonMemberIsRejected(t *testing.T) {
 		rooms, _ := bob.n.Rooms()
 		return len(rooms) == 1
 	})
+	acceptAll(t, bob.n)
+	acceptAll(t, bob.n)
 
 	// Carol is not a member, but she has an authenticated session with Alice.
 	sc := rawSession(t, alice.n.ln.Addr().String(), carol.id)
@@ -520,6 +572,8 @@ func TestRemovedMemberCannotKeepPosting(t *testing.T) {
 		rooms, _ := bob.n.Rooms()
 		return len(rooms) == 1
 	})
+	acceptAll(t, bob.n)
+	acceptAll(t, bob.n)
 	if err := alice.n.RemoveRoomMember(room.ID, "Bob"); err != nil {
 		t.Fatal(err)
 	}
@@ -563,6 +617,8 @@ func TestRoomSenderSeqReachesTheReceiver(t *testing.T) {
 		rooms, _ := bob.n.Rooms()
 		return len(rooms) == 1
 	})
+	acceptAll(t, bob.n)
+	acceptAll(t, bob.n)
 
 	const n = 5
 	for i := 0; i < n; i++ {
@@ -618,6 +674,8 @@ func TestRoomSeqIsPerSender(t *testing.T) {
 		rooms, _ := bob.n.Rooms()
 		return len(rooms) == 1
 	})
+	acceptAll(t, bob.n)
+	acceptAll(t, bob.n)
 
 	for i := 0; i < 3; i++ {
 		alice.n.SendRoomMessage(room.ID, fmt.Sprintf("a%d", i)) //nolint:errcheck
@@ -685,11 +743,8 @@ func TestRoomReactionReachesEveryMember(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, "everyone sees the room", func() bool {
-		br, _ := bob.n.Rooms()
-		cr, _ := carol.n.Rooms()
-		return len(br) == 1 && len(cr) == 1
-	})
+	joinRoom(t, bob.n, 1)
+	joinRoom(t, carol.n, 1)
 	time.Sleep(500 * time.Millisecond)
 
 	msg, err := alice.n.SendRoomMessage(room.ID, "ship it")
@@ -760,5 +815,129 @@ func TestRoomReactionFromNonMemberIsRejected(t *testing.T) {
 		if len(m.Reactions) != 0 {
 			t.Fatalf("a non-member's reaction was stored: %+v", m.Reactions)
 		}
+	}
+}
+
+// Being added to a room is an invitation, not a fait accompli. Until it is
+// accepted the room does nothing: no messages are stored and nothing is sent.
+func TestRoomInviteMustBeAcceptedBeforeAnythingHappens(t *testing.T) {
+	hub := discovery.NewHub()
+	alice := newRig(t, hub, "Alice")
+	bob := newRig(t, hub, "Bob")
+	waitFor(t, "sessions", func() bool { return online(alice.n, "Bob") && online(bob.n, "Alice") })
+
+	room, err := alice.n.CreateRoom("Invite me", []string{"Bob"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "bob is offered the room", func() bool {
+		rooms, _ := bob.n.Rooms()
+		return len(rooms) == 1
+	})
+
+	rooms, _ := bob.n.Rooms()
+	if rooms[0].State != store.RoomPending {
+		t.Fatalf("invitation landed as %q, want %q", rooms[0].State, store.RoomPending)
+	}
+	// Alice's own room is joined outright; she is the one who made it.
+	ar, _ := alice.n.Rooms()
+	if ar[0].State != store.RoomJoined {
+		t.Fatalf("creator's room is %q, want %q", ar[0].State, store.RoomJoined)
+	}
+
+	// Bob cannot send into a room he has not accepted.
+	if _, err := bob.n.SendRoomMessage(room.ID, "hello?"); !errors.Is(err, ErrRoomPending) {
+		t.Fatalf("send while pending: %v, want ErrRoomPending", err)
+	}
+
+	// Anything Alice says while the invitation is unanswered is held, not lost.
+	if _, err := alice.n.SendRoomMessage(room.ID, "said before you accepted"); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(500 * time.Millisecond)
+	if msgs, _ := bob.n.RoomMessages(room.ID, 10); len(msgs) != 0 {
+		t.Fatalf("a pending room stored %d messages", len(msgs))
+	}
+
+	if err := bob.n.AcceptRoomInvite(room.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	// The sender's outbox keeps retrying, so the backlog lands on acceptance.
+	waitFor(t, "backlog arrives after accepting", func() bool {
+		msgs, _ := bob.n.RoomMessages(room.ID, 10)
+		return len(msgs) == 1 && msgs[0].Body == "said before you accepted"
+	})
+	waitFor(t, "alice sees it delivered", func() bool {
+		msgs, _ := alice.n.RoomMessages(room.ID, 10)
+		return len(msgs) == 1 && msgs[0].Status == store.StatusDelivered
+	})
+
+	// And Bob can now take part.
+	if _, err := bob.n.SendRoomMessage(room.ID, "accepted"); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "alice gets bob's reply", func() bool {
+		msgs, _ := alice.n.RoomMessages(room.ID, 10)
+		return len(msgs) == 2
+	})
+}
+
+// Declining removes the room locally and tells the others we are out.
+func TestRoomInviteDecline(t *testing.T) {
+	hub := discovery.NewHub()
+	alice := newRig(t, hub, "Alice")
+	bob := newRig(t, hub, "Bob")
+	waitFor(t, "sessions", func() bool { return online(alice.n, "Bob") && online(bob.n, "Alice") })
+
+	room, err := alice.n.CreateRoom("No thanks", []string{"Bob"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "bob is offered the room", func() bool {
+		rooms, _ := bob.n.Rooms()
+		return len(rooms) == 1
+	})
+
+	if err := bob.n.DeclineRoomInvite(room.ID); err != nil {
+		t.Fatal(err)
+	}
+	if rooms, _ := bob.n.Rooms(); len(rooms) != 0 {
+		t.Fatalf("declined room is still here: %v", rooms)
+	}
+	waitFor(t, "alice drops bob from the room", func() bool {
+		r, err := alice.st.GetRoom(room.ID)
+		return err == nil && !isMember(r.Members, "Bob")
+	})
+
+	// Declining a room that was already joined is refused; leaving is the
+	// operation for that.
+	if err := alice.n.DeclineRoomInvite(room.ID); err == nil {
+		t.Fatal("declined an already-joined room")
+	}
+}
+
+// Accepting announces the arrival, so the creator can tell a live member from
+// one who has not answered.
+func TestRoomAcceptIsAnnounced(t *testing.T) {
+	hub := discovery.NewHub()
+	alice := newRig(t, hub, "Alice")
+	bob := newRig(t, hub, "Bob")
+	waitFor(t, "sessions", func() bool { return online(alice.n, "Bob") && online(bob.n, "Alice") })
+
+	room, err := alice.n.CreateRoom("Announce", []string{"Bob"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	joinRoom(t, bob.n, 1)
+
+	// Bob announcing himself must not disturb Alice's membership list.
+	time.Sleep(300 * time.Millisecond)
+	r, err := alice.st.GetRoom(room.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(r.Members) != 2 || !isMember(r.Members, "Bob") || r.CreatedBy != "Alice" {
+		t.Fatalf("membership disturbed by a join announcement: %+v", r)
 	}
 }

@@ -87,6 +87,8 @@ func New(a *app.App) *Server {
 	m.HandleFunc("DELETE /api/rooms/{id}/members/{name}", s.needNode(s.removeRoomMember))
 	m.HandleFunc("POST /api/rooms/{id}/rename", s.needNode(s.renameRoom))
 	m.HandleFunc("POST /api/rooms/{id}/messages/{msgId}/react", s.needNode(s.reactRoomMessage))
+	m.HandleFunc("POST /api/rooms/{id}/accept", s.needNode(s.acceptRoom))
+	m.HandleFunc("POST /api/rooms/{id}/decline", s.needNode(s.declineRoom))
 
 	// Go's built-in table has no entry for woff2, and a host without a system
 	// mime database would otherwise serve the fonts as octet-stream.
@@ -564,6 +566,22 @@ func (s *Server) addRoomMember(w http.ResponseWriter, r *http.Request, n *node.N
 
 func (s *Server) removeRoomMember(w http.ResponseWriter, r *http.Request, n *node.Node) {
 	if err := n.RemoveRoomMember(r.PathValue("id"), r.PathValue("name")); err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, 200, map[string]bool{"ok": true})
+}
+
+func (s *Server) acceptRoom(w http.ResponseWriter, r *http.Request, n *node.Node) {
+	if err := n.AcceptRoomInvite(r.PathValue("id")); err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, 200, map[string]bool{"ok": true})
+}
+
+func (s *Server) declineRoom(w http.ResponseWriter, r *http.Request, n *node.Node) {
+	if err := n.DeclineRoomInvite(r.PathValue("id")); err != nil {
 		fail(w, err)
 		return
 	}

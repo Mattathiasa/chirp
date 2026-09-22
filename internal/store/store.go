@@ -793,7 +793,20 @@ type Room struct {
 	Members   []string  `json:"members"` // display names (sorted)
 	CreatedBy string    `json:"createdBy"`
 	CreatedAt time.Time `json:"createdAt"`
+	// State is RoomJoined or RoomPending. A room someone else invited us to
+	// starts pending and does nothing until we accept it. Rows written before
+	// this field existed have an empty State and are read as joined.
+	State string `json:"state,omitempty"`
 }
+
+// Room states.
+const (
+	RoomJoined  = "joined"
+	RoomPending = "pending"
+)
+
+// Pending reports whether this room is an unanswered invitation.
+func (r Room) Pending() bool { return r.State == RoomPending }
 
 // RoomMessage is one message in a room.
 type RoomMessage struct {
@@ -845,6 +858,9 @@ func (s *Store) encryptRoom(r *Room) (*Room, error) {
 }
 
 func (s *Store) decryptRoom(r *Room) error {
+	if r.State == "" {
+		r.State = RoomJoined // rows written before rooms had a state
+	}
 	name, err := s.decryptString(r.Name)
 	if err != nil {
 		return err
