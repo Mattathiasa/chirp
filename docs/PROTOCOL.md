@@ -135,6 +135,20 @@ room-shaped goes out; the `seq` field rides along inside that capability.
 
 If nothing is read for 30 s the session is declared dead. TCP alone can take minutes to notice a device that vanished from Wi-Fi.
 
+## Test vectors
+
+`docs/testvectors.json` carries an encoded example of every envelope type, a
+set of inputs that must be rejected, and the frame constants. Every `json`
+string in it is produced by the Go encoder and checked against it by
+`TestProtocolTestVectorsMatchTheEncoder`, so the file cannot drift from the
+implementation: a second implementation can be compared to it byte for byte.
+
+Regenerate after a deliberate wire change:
+
+```sh
+UPDATE_VECTORS=1 go test ./internal/proto
+```
+
 ## Delivery semantics
 
 **At-least-once on the wire, exactly-once on screen.**
