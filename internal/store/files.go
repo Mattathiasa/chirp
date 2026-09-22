@@ -98,30 +98,60 @@ func (s *Store) AddOutboundFile(id, peer, name, hash string, data []byte) error 
 	})
 }
 
-// BeginReceive prepares a writable temp file for an incoming transfer.
-func (s *Store) BeginReceive(id, peer, name, hash string, size int64) error {
+// BeginReceive prepares to receive a transfer and reports how many contiguous
+// bytes are already held, so the sender can resume from there.
+//
+// A partial is only reused when the header matches it exactly: same id, same
+// SHA-256 and same size, still in the receiving state, with the bytes still on
+// disk. Anything else - a different file under a reused id, a partial left in
+// a failed state, a temp file that vanished - starts again from zero, because
+// resuming onto the wrong bytes would produce a file that fails its hash at
+// the very end after transferring everything twice.
+func (s *Store) BeginReceive(id, peer, name, hash string, size int64) (int64, error) {
 	dir := fileDir(s.filesDir, id)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return fmt.Errorf("store: create receive dir: %w", err)
+		return 0, fmt.Errorf("store: create receive dir: %w", err)
 	}
 	tmp := filepath.Join(dir, "data.tmp")
-	if err := os.WriteFile(tmp, nil, 0o600); err != nil {
-		return fmt.Errorf("store: init temp file: %w", err)
+
+	resume := int64(0)
+	if prev, err := s.GetFile(id); err == nil &&
+		prev.Status == FileReceiving && prev.Hash == hash && prev.Size == size {
+		if st, serr := os.Stat(tmp); serr == nil {
+			// The database counter is only advanced after the bytes are on
+			// disk, so it can lag a crash but never lead it. Trust the smaller.
+			resume = prev.Received
+			if st.Size() < resume {
+				resume = st.Size()
+			}
+			if resume < 0 || resume > size {
+				resume = 0
+			}
+		}
 	}
+
+	if resume == 0 {
+		if err := os.WriteFile(tmp, nil, 0o600); err != nil {
+			return 0, fmt.Errorf("store: init temp file: %w", err)
+		}
+	}
+
 	f := File{
-		ID:     id,
-		Peer:   peer,
-		Dir:    DirIn,
-		Name:   name,
-		Size:   size,
-		Hash:   hash,
-		Status: FileReceiving,
-		TS:     time.Now(),
+		ID:       id,
+		Peer:     peer,
+		Dir:      DirIn,
+		Name:     name,
+		Size:     size,
+		Hash:     hash,
+		Status:   FileReceiving,
+		Received: resume,
+		TS:       time.Now(),
 	}
-	return s.db.Update(func(tx *bolt.Tx) error {
+	err := s.db.Update(func(tx *bolt.Tx) error {
 		v, _ := json.Marshal(f)
 		return tx.Bucket(bFiles).Put([]byte(id), v)
 	})
+	return resume, err
 }
 
 // WriteChunk writes a received chunk at the given offset and updates progress.
@@ -149,7 +179,16 @@ func (s *Store) WriteChunk(id string, offset int64, data []byte) (File, error) {
 		if err := json.Unmarshal(v, &file); err != nil {
 			return err
 		}
-		file.Received += int64(len(data))
+		// Received is a contiguous high-water mark, not a running total. A
+		// chunk that lands before it is a retransmit and must not advance it
+		// twice; a chunk that starts beyond it would leave a hole, so the
+		// file would be short however many bytes arrived afterwards.
+		if offset > file.Received {
+			return fmt.Errorf("store: chunk at %d leaves a gap after %d", offset, file.Received)
+		}
+		if end := offset + int64(len(data)); end > file.Received {
+			file.Received = end
+		}
 		if file.Received > file.Size {
 			file.Received = file.Size
 		}

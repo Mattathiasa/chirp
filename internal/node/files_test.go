@@ -5,8 +5,11 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"testing"
+	"time"
 
 	"github.com/Mattathiasa/chirp/internal/discovery"
+	"github.com/Mattathiasa/chirp/internal/proto"
+	"github.com/Mattathiasa/chirp/internal/session"
 	"github.com/Mattathiasa/chirp/internal/store"
 )
 
@@ -79,5 +82,151 @@ func TestSendFileSizeBounds(t *testing.T) {
 	q, _ := alice.st.FileOutbox()
 	if len(q) != 0 {
 		t.Fatalf("a rejected file was queued anyway: %v", q)
+	}
+}
+
+// The Phase 2 acceptance case: a transfer cut off partway through resumes on
+// the next connection instead of starting from zero, and the file that lands
+// still matches the sender's hash.
+func TestFileTransferResumesAfterDisconnect(t *testing.T) {
+	hub := discovery.NewHub()
+	alice := newRig(t, hub, "Alice")
+	bob := newRig(t, hub, "Bob")
+	waitFor(t, "sessions", func() bool { return online(alice.n, "Bob") && online(bob.n, "Alice") })
+
+	// Big enough to take many chunks, so there is a middle to interrupt.
+	data := bytes.Repeat([]byte("resumable payload "), 60000) // ~1 MB
+	want := sha256.Sum256(data)
+
+	id, err := alice.n.SendFile("Bob", "big.bin", data)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Cut the connection once Bob has some of it but not all of it.
+	waitFor(t, "transfer is underway", func() bool {
+		f, err := bob.st.GetFile(id)
+		return err == nil && f.Received > 0 && f.Received < f.Size
+	})
+	partial, err := bob.st.GetFile(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if l := alice.n.linkFor("Bob"); l != nil {
+		l.conn.Close()
+	}
+
+	// The peers reconnect on their own and the transfer picks up again.
+	waitFor(t, "bob completes the file", func() bool {
+		f, err := bob.st.GetFile(id)
+		return err == nil && f.Status == store.FileComplete
+	})
+
+	got, err := bob.st.FileData(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h := sha256.Sum256(got); h != want {
+		t.Fatal("the resumed file does not match the sender's hash")
+	}
+	if !bytes.Equal(got, data) {
+		t.Fatal("the resumed file differs from the original")
+	}
+	t.Logf("interrupted at %d of %d bytes, resumed and completed", partial.Received, partial.Size)
+}
+
+// Resuming has to actually save work: the second attempt must start from the
+// bytes already held, not resend the whole file.
+func TestResumeDoesNotResendFromZero(t *testing.T) {
+	hub := discovery.NewHub()
+	alice := newRig(t, hub, "Alice")
+	bob := newRig(t, hub, "Bob")
+	waitFor(t, "sessions", func() bool { return online(alice.n, "Bob") && online(bob.n, "Alice") })
+
+	data := bytes.Repeat([]byte("count the bytes "), 40000) // ~640 KB
+	id, err := alice.n.SendFile("Bob", "counted.bin", data)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	waitFor(t, "transfer is underway", func() bool {
+		f, err := bob.st.GetFile(id)
+		return err == nil && f.Received > int64(len(data))/8
+	})
+	before, _ := bob.st.GetFile(id)
+	if l := alice.n.linkFor("Bob"); l != nil {
+		l.conn.Close()
+	}
+
+	// After the break the received count must never go backwards, which is
+	// what starting over would look like from here.
+	lowest := before.Received
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			f, err := bob.st.GetFile(id)
+			if err == nil {
+				if f.Received < lowest {
+					lowest = f.Received
+				}
+				if f.Status == store.FileComplete {
+					return
+				}
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}()
+
+	waitFor(t, "bob completes the file", func() bool {
+		f, err := bob.st.GetFile(id)
+		return err == nil && f.Status == store.FileComplete
+	})
+	<-done
+
+	if lowest < before.Received {
+		t.Fatalf("progress fell from %d to %d: the transfer restarted instead of resuming",
+			before.Received, lowest)
+	}
+}
+
+// A peer that predates resume does not know the fileack type, and an unknown
+// type is fatal to a Noise session. Neither side may send one unless the other
+// advertised the capability; the transfer then simply runs from the start.
+func TestFileTransferWorksWithoutTheResumeCapability(t *testing.T) {
+	saved := session.LocalCaps
+	session.LocalCaps = []string{proto.CapFiles, proto.CapReactions, proto.CapReceipts, proto.CapTyping, proto.CapRooms}
+	t.Cleanup(func() { session.LocalCaps = saved })
+
+	hub := discovery.NewHub()
+	alice := newRig(t, hub, "Alice")
+	bob := newRig(t, hub, "Bob")
+	waitFor(t, "sessions", func() bool { return online(alice.n, "Bob") && online(bob.n, "Alice") })
+
+	if l := alice.n.linkFor("Bob"); l != nil && l.speaks(proto.CapResume) {
+		t.Fatal("the peer should not be advertising resume in this test")
+	}
+
+	data := bytes.Repeat([]byte("no resume here "), 5000)
+	want := sha256.Sum256(data)
+	id, err := alice.n.SendFile("Bob", "plain.bin", data)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	waitFor(t, "bob completes the file", func() bool {
+		f, err := bob.st.GetFile(id)
+		return err == nil && f.Status == store.FileComplete
+	})
+	got, err := bob.st.FileData(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h := sha256.Sum256(got); h != want {
+		t.Fatal("file does not match the sender's hash")
+	}
+	// The session must still be up: a stray fileack would have torn it down.
+	if !online(alice.n, "Bob") {
+		t.Fatal("the session dropped during a transfer to a peer without resume")
 	}
 }

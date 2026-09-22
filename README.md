@@ -72,7 +72,7 @@ Read these before you rely on it for anything.
 * **Some networks will not work.** Guest Wi-Fi with client isolation, VLAN splits and firewalls that drop UDP 5353 or the chosen TCP port all prevent discovery or connection. The Network screen lists the usual causes.
 * **Desktop and browser only for now.** The Flutter mobile client is the next phase. It will speak this same protocol; `docs/testvectors.json` exists so it can be checked against this implementation byte for byte.
 * **Rooms have no shared key and no global order.** Every room message is sent as one separately encrypted copy per member, so a member who leaves keeps everything they already received, and two people sending at the same moment have no defined relative order. Both limits are spelled out in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
-* **File transfer does not resume.** A transfer interrupted midway starts again from the beginning. Chunks are verified end to end, so a corrupted one is rejected rather than stored.
+* **File transfer holds whole files in memory.** Transfers resume after an interruption and are verified end to end against the sender's SHA-256, but both sides buffer the entire file rather than streaming it, so a 100 MB transfer costs 100 MB of RAM on each side.
 * **Transport is TCP, not UDP.** The original brief called for UDP. TCP already provides the ordering Noise needs and the retransmission a reliable-UDP layer would have to reinvent. See the architecture doc for why, and where a datagram transport would plug in.
 
 ## Development

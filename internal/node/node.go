@@ -28,6 +28,10 @@ import (
 	"github.com/Mattathiasa/chirp/internal/store"
 )
 
+// fileAckWait bounds how long a sender waits to learn where to resume from
+// before giving up and leaving the transfer for the retry loop.
+const fileAckWait = 10 * time.Second
+
 // Errors surfaced to callers.
 var (
 	ErrUnknownPeer = errors.New("node: unknown peer")
@@ -548,6 +552,14 @@ func (n *Node) flushFile(peer, fileID string) {
 	n.cfg.Store.MarkFileSending(fileID) //nolint:errcheck
 	l.flushMu.Lock()
 	defer l.flushMu.Unlock()
+
+	// Register before the header goes out: the answer can arrive first.
+	var ackCh chan int64
+	if l.speaks(proto.CapResume) {
+		ackCh = l.awaitFileAck(fileID)
+		defer l.cancelFileAck(fileID)
+	}
+
 	if err := l.send(proto.Envelope{
 		T: proto.TypeFile, ID: fileID, Src: f.Name, Size: f.Size, Hash: f.Hash,
 	}); err != nil {
@@ -555,7 +567,34 @@ func (n *Node) flushFile(peer, fileID string) {
 		l.conn.Close()
 		return
 	}
+
 	off := int64(0)
+	if ackCh != nil {
+		// The receiver says how much it already holds. Waiting costs one round
+		// trip and saves resending everything that survived the interruption.
+		select {
+		case off = <-ackCh:
+			if off < 0 || off > f.Size {
+				off = 0
+			}
+			if off > 0 {
+				n.logf("resuming %s to %q at %d of %d bytes", f.Name, peer, off, f.Size)
+			}
+		case <-time.After(fileAckWait):
+			// The peer advertised resume and did not answer. Leave the file in
+			// the outbox and let the retry loop try again rather than push the
+			// whole thing at a peer that may be wedged.
+			n.logf("no fileack from %q for %s; will retry", peer, f.Name)
+			return
+		}
+	}
+	if off >= f.Size {
+		// Nothing left to send: the receiver has it all and is verifying.
+		n.cfg.Store.MarkFileSent(fileID) //nolint:errcheck
+		n.emit(Event{Type: "fileComplete", Peer: peer, FileID: fileID, FileSrc: f.Name})
+		return
+	}
+
 	for off < f.Size {
 		end := off + proto.ChunkSize
 		if end > f.Size {
@@ -565,11 +604,14 @@ func (n *Node) flushFile(peer, fileID string) {
 		if err := l.send(proto.Envelope{
 			T: proto.TypeChunk, ID: fileID, Offset: off, Chunk: chunk,
 		}); err != nil {
+			// The transfer stays in the outbox; the next attempt resumes from
+			// wherever the receiver actually got to.
 			n.logf("file chunk to %q: %v", peer, err)
 			l.conn.Close()
 			return
 		}
 		off = end
+		n.emit(Event{Type: "fileProgress", Peer: peer, FileID: fileID, FileSrc: f.Name, Progress: progressOf(off, f.Size)})
 	}
 	n.cfg.Store.MarkFileSent(fileID) //nolint:errcheck
 	n.emit(Event{Type: "fileComplete", Peer: peer, FileID: fileID, FileSrc: f.Name})

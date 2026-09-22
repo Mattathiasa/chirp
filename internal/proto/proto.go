@@ -42,6 +42,7 @@ const (
 	CapReceipts  = "receipts"  // read receipt support
 	CapTyping    = "typing"    // typing indicator support
 	CapRooms     = "rooms"     // group chat support (roommsg/roomack/roomevent)
+	CapResume    = "resume"    // resumable file transfer (fileack)
 )
 
 // Frame errors.
@@ -86,16 +87,17 @@ func ReadFrame(r io.Reader) ([]byte, error) {
 type Type string
 
 const (
-	TypeMsg    Type = "msg"
-	TypeAck    Type = "ack"
-	TypePing   Type = "ping"
-	TypeReact  Type = "react"
-	TypeDel    Type = "del"    // delete-for-me
-	TypeDelAll Type = "delall" // delete-for-everyone (best effort)
-	TypeTyping Type = "typing"
-	TypeRead   Type = "read"
-	TypeFile   Type = "file"  // file metadata
-	TypeChunk  Type = "chunk" // file data chunk
+	TypeMsg     Type = "msg"
+	TypeAck     Type = "ack"
+	TypePing    Type = "ping"
+	TypeReact   Type = "react"
+	TypeDel     Type = "del"    // delete-for-me
+	TypeDelAll  Type = "delall" // delete-for-everyone (best effort)
+	TypeTyping  Type = "typing"
+	TypeRead    Type = "read"
+	TypeFile    Type = "file"    // file metadata
+	TypeChunk   Type = "chunk"   // file data chunk
+	TypeFileAck Type = "fileack" // receiver: "I hold this many bytes, resume there"
 
 	// Room types (Phase 3).
 	TypeRoomMsg   Type = "roommsg"   // message to a room
@@ -252,11 +254,23 @@ func (e Envelope) validate() error {
 		if err := checkID(e.ID); err != nil {
 			return err
 		}
-		if e.Offset < 0 {
-			return errors.New("proto: chunk offset must be non-negative")
+		if e.Offset < 0 || e.Offset > MaxFileSize {
+			return errors.New("proto: chunk offset out of range")
 		}
 		if len(e.Chunk) == 0 || len(e.Chunk) > ChunkSize+1024 { // base64 overhead
 			return errors.New("proto: chunk size out of range")
+		}
+	case TypeFileAck:
+		if err := checkID(e.ID); err != nil {
+			return err
+		}
+		// Offset is how many contiguous bytes the receiver already holds, so
+		// zero is both legal and the common case: start from the beginning.
+		if e.Offset < 0 || e.Offset > MaxFileSize {
+			return errors.New("proto: fileack offset out of range")
+		}
+		if len(e.Chunk) != 0 || e.Body != "" {
+			return errors.New("proto: fileack must carry no data")
 		}
 	case TypeRoomMsg:
 		if err := checkID(e.ID); err != nil {

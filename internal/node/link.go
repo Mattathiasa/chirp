@@ -25,6 +25,60 @@ type link struct {
 	rxFileHash string
 	rxFileSize int64
 	rxFileName string
+
+	// Outbound transfers waiting to learn where to resume from.
+	ackMu   sync.Mutex
+	fileAck map[string]chan int64
+}
+
+// speaks reports whether the peer advertised a capability in its handshake.
+func (l *link) speaks(cap string) bool {
+	for _, c := range l.conn.RemoteCaps {
+		if c == cap {
+			return true
+		}
+	}
+	return false
+}
+
+// awaitFileAck registers interest in the resume offset for a transfer. It must
+// be called before the header goes out, or the answer can arrive first.
+func (l *link) awaitFileAck(id string) chan int64 {
+	l.ackMu.Lock()
+	defer l.ackMu.Unlock()
+	if l.fileAck == nil {
+		l.fileAck = make(map[string]chan int64)
+	}
+	ch := make(chan int64, 1)
+	l.fileAck[id] = ch
+	return ch
+}
+
+func (l *link) cancelFileAck(id string) {
+	l.ackMu.Lock()
+	defer l.ackMu.Unlock()
+	delete(l.fileAck, id)
+}
+
+func (l *link) deliverFileAck(id string, offset int64) {
+	l.ackMu.Lock()
+	ch := l.fileAck[id]
+	l.ackMu.Unlock()
+	if ch == nil {
+		return // nothing waiting; a late or unsolicited ack is harmless
+	}
+	select {
+	case ch <- offset:
+	default: // already answered
+	}
+}
+
+// progressOf is a 0..1 fraction that does not divide by zero.
+func progressOf(done, total int64) float64 {
+	if total <= 0 {
+		return 0
+	}
+	return float64(done) / float64(total)
 }
 
 func newLink(n *Node, c *session.Conn, peer string) *link {
@@ -126,27 +180,48 @@ func (l *link) readLoop(ctx context.Context) {
 		case proto.TypeRead:
 			l.n.emit(Event{Type: "read", Peer: l.peer, Target: e.Target})
 		case proto.TypeFile:
-			// Start a new reception. BeginReceive truncates any previous partial.
-			l.rxFileID = e.ID
-			l.rxFileOff = 0
-			l.rxFileHash = e.Hash
-			l.rxFileSize = e.Size
-			l.rxFileName = e.Src
-			if err := l.n.cfg.Store.BeginReceive(e.ID, l.peer, e.Src, e.Hash, e.Size); err != nil {
+			// BeginReceive keeps a matching partial and tells us where it got
+			// to, so an interrupted transfer picks up instead of starting over.
+			resume, err := l.n.cfg.Store.BeginReceive(e.ID, l.peer, e.Src, e.Hash, e.Size)
+			if err != nil {
 				l.n.logf("begin receive %s: %v", e.ID, err)
 				l.conn.Close()
 				return
 			}
-			l.n.emit(Event{Type: "file", Peer: l.peer, FileID: e.ID, FileSrc: e.Src, FileSize: e.Size, FileHash: e.Hash})
+			l.rxFileID = e.ID
+			l.rxFileOff = resume
+			l.rxFileHash = e.Hash
+			l.rxFileSize = e.Size
+			l.rxFileName = e.Src
+			if resume > 0 {
+				l.n.logf("resuming %s from %d of %d bytes", e.Src, resume, e.Size)
+			}
+			// Only answer a sender that asked for one: an older peer does not
+			// know this type, and an unknown type is fatal to the session.
+			if l.speaks(proto.CapResume) {
+				if err := l.send(proto.Envelope{T: proto.TypeFileAck, ID: e.ID, Offset: resume}); err != nil {
+					l.n.logf("fileack to %s: %v", l.peer, err)
+					return
+				}
+			}
+			l.n.emit(Event{Type: "file", Peer: l.peer, FileID: e.ID, FileSrc: e.Src, FileSize: e.Size, FileHash: e.Hash, Progress: progressOf(resume, e.Size)})
+		case proto.TypeFileAck:
+			l.deliverFileAck(e.ID, e.Offset)
 		case proto.TypeChunk:
 			if e.ID != l.rxFileID {
 				continue // chunk for an unknown/older transfer; ignore
 			}
-			l.rxFileOff += int64(len(e.Chunk))
-			if _, err := l.n.cfg.Store.WriteChunk(e.ID, e.Offset, e.Chunk); err != nil {
+			f, err := l.n.cfg.Store.WriteChunk(e.ID, e.Offset, e.Chunk)
+			if err != nil {
+				// A gap means the stream is not what we think it is. Drop the
+				// session rather than assemble a file we would only discover
+				// was wrong at the final hash check.
 				l.n.logf("write chunk %s: %v", e.ID, err)
+				l.conn.Close()
+				return
 			}
-			progress := float64(l.rxFileOff) / float64(l.rxFileSize)
+			l.rxFileOff = f.Received
+			progress := progressOf(l.rxFileOff, l.rxFileSize)
 			l.n.emit(Event{Type: "fileProgress", Peer: l.peer, FileID: e.ID, FileHash: l.rxFileHash, Progress: progress})
 			if l.rxFileOff >= l.rxFileSize {
 				if err := l.n.cfg.Store.CompleteFile(e.ID); err != nil {

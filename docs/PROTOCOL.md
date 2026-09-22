@@ -64,9 +64,38 @@ Each transport frame carries one ChaCha20-Poly1305 ciphertext of one JSON envelo
 | `read` | `target` (32 hex, message ID) | read receipt for message `target` |
 | `file` | `id` (32 hex), `src` (filename), `size` (bytes, ≤100 MB), `hash` (64 hex SHA-256) | file transfer metadata |
 | `chunk` | `id` (32 hex), `offset` (byte offset), `chunk` (≤32 KB, base64 in JSON) | file data chunk |
+| `fileack` | `id` (32 hex), `offset` (contiguous bytes already held) | receiver: resume the transfer from `offset` |
 | `roommsg` | `id` (32 hex), `room` (32 hex), `ts`, `body` (1..4096 bytes), `seq` (optional, sender's per-room counter), `replyTo` (optional) | a message to a room |
 | `roomack` | `id` (32 hex), `room` (32 hex) | the receiver has **persisted** room message `id` |
 | `roomevent` | `room` (32 hex), `roomEvent` (`create`/`join`/`leave`/`remove`/`rename`), `roomActor`, `roomName` (rename/create), `roomMembers` (create) | a membership change |
+
+### Resuming a transfer
+
+A transfer that is cut off partway through picks up where it stopped:
+
+1. The sender sends `file` with the id, name, size and SHA-256.
+2. The receiver looks for a partial under that id. It reuses one only when the
+   id, hash and size all match and the bytes are still on disk; anything else
+   starts from zero, because resuming onto the wrong bytes produces a file that
+   fails its hash only after everything has been transferred twice.
+3. The receiver replies `fileack` with the number of contiguous bytes it holds.
+4. The sender sends `chunk`s from that offset.
+
+`fileack` is gated on the `resume` capability in both directions. Neither side
+sends one unless the other advertised it, because an unknown envelope type is
+fatal to the session rather than ignored. Against a peer without the
+capability the sender skips the round trip and transmits from the beginning.
+
+The receiver's byte count is a **contiguous high-water mark**, not a running
+total. A chunk that arrives below it is a retransmit and does not advance it
+twice; a chunk that starts above it would leave a hole and is refused, so a
+short file can never be assembled and then presented as complete. The counter
+is written only after the bytes reach disk, so it can lag a crash but never
+lead one, and the smaller of it and the file's real length is what resumes.
+
+A sender that advertised resume and gets no `fileack` within ten seconds leaves
+the transfer in its outbox for the retry loop rather than pushing the whole
+file at a peer that may be wedged.
 
 ### Why chunks are 32 KB
 
@@ -112,11 +141,12 @@ The Hello `caps` field advertises supported features. v2 peers always advertise 
 
 | Cap | Feature |
 | --- | --- |
-| `files` | File transfer (chunked, resumable, SHA-256 verified) |
+| `files` | File transfer (chunked, SHA-256 verified end to end) |
 | `reactions` | Emoji reactions |
 | `receipts` | Read receipts |
 | `typing` | Typing indicators |
 | `rooms` | Group chat (`roommsg`, `roomack`, `roomevent`) |
+| `resume` | Resumable file transfer (`fileack`) |
 
 ### Backward compatibility
 

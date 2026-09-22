@@ -17,10 +17,11 @@
           "reactions",
           "receipts",
           "typing",
-          "rooms"
+          "rooms",
+          "resume"
         ]
       },
-      "json": "{\"v\":2,\"name\":\"Bob\",\"caps\":[\"files\",\"reactions\",\"receipts\",\"typing\",\"rooms\"]}"
+      "json": "{\"v\":2,\"name\":\"Bob\",\"caps\":[\"files\",\"reactions\",\"receipts\",\"typing\",\"rooms\",\"resume\"]}"
     },
     "v2_no_caps": {
       "input": {
@@ -79,6 +80,22 @@
         "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
       "json": "{\"t\":\"file\",\"id\":\"aabbccdd11223344aabbccdd11223344\",\"src\":\"photo.jpg\",\"size\":1048576,\"hash\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\"}"
+    },
+    "fileack": {
+      "input": {
+        "t": "fileack",
+        "id": "aabbccdd11223344aabbccdd11223344",
+        "offset": 1048576
+      },
+      "json": "{\"t\":\"fileack\",\"id\":\"aabbccdd11223344aabbccdd11223344\",\"offset\":1048576}"
+    },
+    "fileack_from_zero": {
+      "input": {
+        "t": "fileack",
+        "id": "aabbccdd11223344aabbccdd11223344",
+        "offset": 0
+      },
+      "json": "{\"t\":\"fileack\",\"id\":\"aabbccdd11223344aabbccdd11223344\"}"
     },
     "msg": {
       "input": {
@@ -226,6 +243,10 @@
       "offset": 0,
       "t": "chunk"
     },
+    "chunk_offset_too_large": {
+      "json": "{\"t\":\"chunk\",\"id\":\"aabbccdd11223344aabbccdd11223344\",\"offset\":999999999999,\"chunk\":\"SGk=\"}",
+      "reason": "offset beyond the maximum file size"
+    },
     "del_no_target": {
       "id": "aabbccdd11223344aabbccdd11223344",
       "t": "del"
@@ -250,6 +271,18 @@
       "id": "aabbccdd11223344aabbccdd11223344",
       "size": 100,
       "t": "file"
+    },
+    "fileack_negative_offset": {
+      "json": "{\"t\":\"fileack\",\"id\":\"aabbccdd11223344aabbccdd11223344\",\"offset\":-1}",
+      "reason": "offset must not be negative"
+    },
+    "fileack_no_id": {
+      "json": "{\"t\":\"fileack\",\"offset\":10}",
+      "reason": "fileack must name a transfer"
+    },
+    "fileack_with_data": {
+      "json": "{\"t\":\"fileack\",\"id\":\"aabbccdd11223344aabbccdd11223344\",\"offset\":0,\"chunk\":\"SGk=\"}",
+      "reason": "fileack carries no data"
     },
     "msg_bad_id_hex": {
       "id": "not-hex-at-all-0000000000000000",
