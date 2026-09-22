@@ -70,6 +70,25 @@
 * Pruning removes dedup entries with the message; a very late retransmit of a pruned message would reappear. Retention windows are far longer than any retry window.
 * Real Wi-Fi behaviour (client isolation, multicast filtering, firewalls) cannot be simulated. The Network screen and README explain the usual causes.
 
+## Displaying a received file
+
+A file that arrives is bytes chosen by someone else, so nothing about it is
+taken on trust. It is served two ways and no other:
+
+* `GET /api/files/{id}/data` is `application/octet-stream` with an attachment
+  disposition. The browser saves it; it never renders it.
+* `GET /api/files/{id}/preview` will display it inline, but only after the
+  daemon sniffs the content and finds PNG, JPEG, GIF or WebP. The sender's
+  filename is not consulted at any point. The response carries `nosniff` so the
+  browser cannot re-decide, and `Content-Security-Policy: sandbox; default-src
+  'none'` so it stays inert even if one of those formats later turns out to be
+  scriptable in some browser.
+
+SVG is missing from that list deliberately. It is an image to a person and a
+scriptable document to a browser, so it is downloadable and never previewed.
+Anything else is refused with 415 rather than guessed at, and the UI simply
+shows no thumbnail.
+
 ## Rooms: threat model
 
 Rooms use **fan-out of one pairwise-encrypted copy per member**. There is no shared group key. Each message is encrypted separately to each member's Noise session, so forward secrecy properties come from the pairwise sessions. The cost is O(n) bandwidth per message, which is acceptable for LAN sizes (capped at 32 members).

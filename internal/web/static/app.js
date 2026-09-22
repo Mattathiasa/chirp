@@ -425,7 +425,19 @@ function fileEl(f) {
     'aria-label': `${f.name} transfer progress` },
     h('i', { style: `width:${Math.max(2, Math.round(frac * 100))}%` }));
 
+  // A preview is only attempted for a verified inbound file, and only after
+  // the daemon confirms by sniffing the bytes that it really is an image. If
+  // it is not, the request 415s and the thumbnail simply never appears.
+  let preview = null;
+  if (!mine && f.status === 'complete') {
+    const img = h('img', { class: 'thumb', alt: `Preview of ${f.name}`, loading: 'lazy',
+      src: `/api/files/${enc(f.id)}/preview` });
+    img.addEventListener('error', () => img.remove());
+    preview = img;
+  }
+
   return h('div', { class: 'm ' + (mine ? 'me' : 'them') },
+    preview,
     h('div', { class: 'filecard' + (failed ? ' bad' : '') },
       h('span', { class: 'fic' }, icon(failed ? 'warn' : 'file', 20)),
       h('div', { class: 'grow' },

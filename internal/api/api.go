@@ -80,6 +80,7 @@ func New(a *app.App) *Server {
 	m.HandleFunc("GET /api/files", s.needNode(s.files))
 	m.HandleFunc("GET /api/files/{id}", s.needNode(s.getFile))
 	m.HandleFunc("GET /api/files/{id}/data", s.needNode(s.fileData))
+	m.HandleFunc("GET /api/files/{id}/preview", s.needNode(s.filePreview))
 	m.HandleFunc("DELETE /api/files/{id}", s.needNode(s.deleteFile))
 
 	// Room routes.
@@ -793,6 +794,58 @@ func (s *Server) fileData(w http.ResponseWriter, r *http.Request, n *node.Node) 
 	if f != nil && f.Name != "" {
 		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename=%q`, sanitizeFilename(f.Name)))
 	}
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(data)
+}
+
+// previewable lists the types a received file may be displayed as. It is an
+// allow-list of raster formats on purpose. SVG is deliberately absent: it is a
+// document that can carry script, so rendering a peer-supplied one inline
+// would hand them a way to run code in the page.
+var previewable = map[string]bool{
+	"image/png":  true,
+	"image/jpeg": true,
+	"image/gif":  true,
+	"image/webp": true,
+}
+
+// filePreview serves a received image for display in the conversation.
+//
+// The bytes come from a peer, so the type is decided here by sniffing the
+// content, never by the filename the sender chose. Anything not on the
+// allow-list is refused rather than guessed at, the response says nosniff so
+// the browser cannot second-guess it either, and a sandbox policy neuters the
+// response even if something on the list is later found to be scriptable.
+func (s *Server) filePreview(w http.ResponseWriter, r *http.Request, n *node.Node) {
+	id := r.PathValue("id")
+	f, err := n.FileMeta(id)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	if f.Dir != store.DirIn || f.Status != store.FileComplete {
+		writeErr(w, http.StatusNotFound, "no preview for this file")
+		return
+	}
+	data, err := n.FileData(id)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	ct := http.DetectContentType(data)
+	if i := strings.IndexByte(ct, ';'); i >= 0 {
+		ct = strings.TrimSpace(ct[:i])
+	}
+	if !previewable[ct] {
+		writeErr(w, http.StatusUnsupportedMediaType, "not a previewable image")
+		return
+	}
+	h := w.Header()
+	h.Set("Content-Type", ct)
+	h.Set("Content-Length", fmt.Sprintf("%d", len(data)))
+	h.Set("X-Content-Type-Options", "nosniff")
+	h.Set("Content-Security-Policy", "sandbox; default-src 'none'")
+	h.Set("Content-Disposition", "inline")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(data)
 }

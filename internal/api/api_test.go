@@ -3,6 +3,8 @@ package api
 import (
 	"bufio"
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -332,5 +334,103 @@ func TestMessageActionRoutesExist(t *testing.T) {
 		if r, _ := c.do(m, p, nil, map[string]string{"X-Chirp": ""}); r.StatusCode != 403 {
 			t.Errorf("%s %s accepted without X-Chirp: %d", m, p, r.StatusCode)
 		}
+	}
+}
+
+// A received file is peer-controlled data. The preview endpoint decides what
+// it is by sniffing the bytes, never by what the sender called the file, and
+// refuses anything outside a small allow-list of raster formats.
+func TestFilePreviewSniffsAndRefusesEverythingElse(t *testing.T) {
+	hub := discovery.NewHub()
+	a := newApp(t, hub)
+	c := newClient(t, a)
+	if r, b := c.do("POST", "/api/setup", map[string]string{"name": "Alex"}, nil); r.StatusCode != 200 {
+		t.Fatalf("setup: %d %s", r.StatusCode, b)
+	}
+	st := a.St
+
+	// One-pixel PNG, and a piece of HTML dressed up as one.
+	png := []byte{
+		0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A,
+		0, 0, 0, 0x0D, 'I', 'H', 'D', 'R', 0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0,
+		0x1F, 0x15, 0xC4, 0x89,
+	}
+	html := []byte("<html><script>alert(1)</script></html>")
+
+	put := func(id, name string, body []byte) {
+		t.Helper()
+		sum := sha256.Sum256(body)
+		hash := hex.EncodeToString(sum[:])
+		if _, err := st.BeginReceive(id, "Sam", name, hash, int64(len(body))); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := st.WriteChunk(id, 0, body); err != nil {
+			t.Fatal(err)
+		}
+		if err := st.CompleteFile(id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	const pngID = "11111111111111111111111111111111"
+	const htmlID = "22222222222222222222222222222222"
+	put(pngID, "photo.png", png)
+	put(htmlID, "photo.png", html) // named .png, is not one
+
+	// The real image is served as an image, and locked down.
+	r, body := c.do("GET", "/api/files/"+pngID+"/preview", nil, nil)
+	if r.StatusCode != 200 {
+		t.Fatalf("png preview: %d %s", r.StatusCode, body)
+	}
+	if ct := r.Header.Get("Content-Type"); ct != "image/png" {
+		t.Errorf("Content-Type = %q, want image/png", ct)
+	}
+	if r.Header.Get("X-Content-Type-Options") != "nosniff" {
+		t.Error("preview does not forbid the browser sniffing it further")
+	}
+	if !strings.Contains(r.Header.Get("Content-Security-Policy"), "sandbox") {
+		t.Error("preview is not sandboxed")
+	}
+
+	// The impostor is refused outright rather than served as anything.
+	r, _ = c.do("GET", "/api/files/"+htmlID+"/preview", nil, nil)
+	if r.StatusCode != http.StatusUnsupportedMediaType {
+		t.Fatalf("html named .png: %d, want 415", r.StatusCode)
+	}
+
+	// And it is still downloadable, as an attachment, which never renders.
+	r, _ = c.do("GET", "/api/files/"+htmlID+"/data", nil, nil)
+	if r.StatusCode != 200 {
+		t.Fatalf("download: %d", r.StatusCode)
+	}
+	if ct := r.Header.Get("Content-Type"); ct != "application/octet-stream" {
+		t.Errorf("download Content-Type = %q", ct)
+	}
+	if !strings.Contains(r.Header.Get("Content-Disposition"), "attachment") {
+		t.Error("download is not an attachment")
+	}
+}
+
+// SVG is an image to a person and a scriptable document to a browser, so it is
+// downloadable but never previewed.
+func TestFilePreviewRefusesSVG(t *testing.T) {
+	hub := discovery.NewHub()
+	a := newApp(t, hub)
+	c := newClient(t, a)
+	c.do("POST", "/api/setup", map[string]string{"name": "Alex"}, nil) //nolint:errcheck
+
+	svg := []byte(`<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>`)
+	sum := sha256.Sum256(svg)
+	const id = "33333333333333333333333333333333"
+	if _, err := a.St.BeginReceive(id, "Sam", "logo.svg", hex.EncodeToString(sum[:]), int64(len(svg))); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.St.WriteChunk(id, 0, svg); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.St.CompleteFile(id); err != nil {
+		t.Fatal(err)
+	}
+	if r, _ := c.do("GET", "/api/files/"+id+"/preview", nil, nil); r.StatusCode == 200 {
+		t.Fatal("an SVG was offered for inline display")
 	}
 }

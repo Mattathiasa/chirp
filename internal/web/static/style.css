@@ -183,6 +183,10 @@ h1, h2, h3 { font-family: var(--display); font-weight: 800; letter-spacing: -.04
 .filecard a.iconbtn { flex: none; text-decoration: none; display: grid; place-items: center; }
 @media (prefers-reduced-motion: reduce) { .filecard .bar i { transition: none; } }
 @media (max-width: 760px) { .filecard { min-width: 0; max-width: 100%; } }
+/* Image preview above its file card. Capped so a large photo cannot take over
+   the conversation, and clipped so an odd aspect ratio cannot either. */
+.thumb { display: block; max-width: min(320px, 100%); max-height: 240px; width: auto; object-fit: cover; border: 2px solid var(--ink); border-radius: 18px; box-shadow: 4px 4px 0 var(--ink); background: var(--paper2); margin-bottom: 8px; }
+
 
 .iconbtn.sm { width: 36px; height: 36px; border-radius: 12px; }
 .searchwrap { display: flex; align-items: center; gap: 8px; margin: 8px 20px; padding: 0 16px; height: 48px; border-radius: 16px; background: var(--white); border: 2px solid var(--ink); color: var(--mute); }
