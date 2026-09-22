@@ -457,9 +457,28 @@ func (n *Node) sendRoomEvent(member, roomID, eventType, actor, name string, memb
 	}
 }
 
-// HandleRoomMsg processes an incoming room message from a peer.
+// handleRoomMsg processes an incoming room message from a peer.
+//
+// Security: l.peer is the Noise-authenticated identity of the sender. A room
+// message is only accepted for a room we are in, from a peer who is currently
+// in it. Without both checks any pinned peer could write rows for room ids we
+// have never seen, and a removed member could keep posting into the room they
+// were removed from - removal would only stop us sending to them, not stop
+// them talking to us.
 func (n *Node) handleRoomMsg(l *link, e proto.Envelope) {
-	n.logf("room msg received from %s for room %s (id=%s)", l.peer, e.Room, e.ID)
+	r, err := n.cfg.Store.GetRoom(e.Room)
+	if err != nil {
+		n.logf("room msg dropped: unknown room %s from %s", e.Room, l.peer)
+		return
+	}
+	if !isMember(r.Members, l.peer) {
+		n.logf("room msg dropped: %q is not a member of %s", l.peer, e.Room)
+		return
+	}
+	if !isMember(r.Members, n.id.Name) {
+		n.logf("room msg dropped: we are not a member of %s", e.Room)
+		return
+	}
 	m := store.RoomMessage{
 		ID:     e.ID,
 		Room:   e.Room,
@@ -491,8 +510,14 @@ func (n *Node) handleRoomMsg(l *link, e proto.Envelope) {
 	}
 }
 
-// HandleRoomAck processes an incoming room ack from a peer.
+// handleRoomAck processes an incoming room ack from a peer. Only a current
+// member of a room we hold can move a message's delivery state.
 func (n *Node) handleRoomAck(l *link, e proto.Envelope) {
+	r, err := n.cfg.Store.GetRoom(e.Room)
+	if err != nil || !isMember(r.Members, l.peer) {
+		n.logf("room ack dropped from %q for room %s", l.peer, e.Room)
+		return
+	}
 	_, changed, err := n.cfg.Store.MarkRoomDelivered(e.Room, l.peer, e.ID)
 	if err != nil {
 		n.logf("room ack store: %v", err)

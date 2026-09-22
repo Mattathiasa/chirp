@@ -1,6 +1,7 @@
 package node
 
 import (
+	"crypto/rand"
 	"testing"
 	"time"
 
@@ -431,5 +432,115 @@ func TestRoomCreateEventCannotSeizeAnExistingRoom(t *testing.T) {
 	}
 	if !isMember(got.Members, "Alice") || !isMember(got.Members, "Bob") || len(got.Members) != 2 {
 		t.Fatalf("membership rewritten by a forged create: %v", got.Members)
+	}
+}
+
+// A room message must come from somebody who is actually in that room. Without
+// the check, any pinned peer can post into any room id, and a removed member
+// keeps posting into the room they were removed from.
+func TestRoomMessageFromNonMemberIsRejected(t *testing.T) {
+	hub := discovery.NewHub()
+	alice := newRig(t, hub, "Alice")
+	bob := newRig(t, hub, "Bob")
+	carol := newRig(t, hub, "Carol")
+
+	waitFor(t, "all online", func() bool {
+		return online(alice.n, "Bob") && online(alice.n, "Carol")
+	})
+
+	room, err := alice.n.CreateRoom("No Carol", []string{"Bob"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "bob sees room", func() bool {
+		rooms, _ := bob.n.Rooms()
+		return len(rooms) == 1
+	})
+
+	// Carol is not a member, but she has an authenticated session with Alice.
+	sc := rawSession(t, alice.n.ln.Addr().String(), carol.id)
+	id, _ := proto.NewID(rand.Reader)
+	sc.Send(proto.Envelope{ //nolint:errcheck
+		T: proto.TypeRoomMsg, ID: id, Room: room.ID,
+		Body: "I am not in this room", TS: time.Now().UnixMilli(),
+	})
+	time.Sleep(300 * time.Millisecond)
+	sc.Close()
+
+	msgs, _ := alice.n.RoomMessages(room.ID, 10)
+	for _, m := range msgs {
+		if m.Sender == "Carol" {
+			t.Fatalf("stored a room message from a non-member: %+v", m)
+		}
+	}
+	if len(msgs) != 0 {
+		t.Fatalf("expected no messages, got %d", len(msgs))
+	}
+}
+
+// A message for a room id we have never heard of must not create phantom rows.
+func TestRoomMessageForUnknownRoomIsRejected(t *testing.T) {
+	hub := discovery.NewHub()
+	alice := newRig(t, hub, "Alice")
+	bob := newRig(t, hub, "Bob")
+	waitFor(t, "sessions", func() bool { return online(alice.n, "Bob") })
+
+	sc := rawSession(t, alice.n.ln.Addr().String(), bob.id)
+	ghost, _ := proto.NewID(rand.Reader)
+	id, _ := proto.NewID(rand.Reader)
+	sc.Send(proto.Envelope{ //nolint:errcheck
+		T: proto.TypeRoomMsg, ID: id, Room: ghost,
+		Body: "room that does not exist", TS: time.Now().UnixMilli(),
+	})
+	time.Sleep(300 * time.Millisecond)
+	sc.Close()
+
+	if msgs, _ := alice.n.RoomMessages(ghost, 10); len(msgs) != 0 {
+		t.Fatalf("stored %d messages for an unknown room", len(msgs))
+	}
+	if rooms, _ := alice.n.Rooms(); len(rooms) != 0 {
+		t.Fatalf("a room message conjured a room into existence: %v", rooms)
+	}
+}
+
+// Removal has to bite on the receiving side too: the remover must stop
+// accepting the removed member's messages, not merely stop sending to them.
+func TestRemovedMemberCannotKeepPosting(t *testing.T) {
+	hub := discovery.NewHub()
+	alice := newRig(t, hub, "Alice")
+	bob := newRig(t, hub, "Bob")
+	waitFor(t, "sessions", func() bool { return online(alice.n, "Bob") && online(bob.n, "Alice") })
+
+	room, err := alice.n.CreateRoom("Private", []string{"Bob"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "bob sees room", func() bool {
+		rooms, _ := bob.n.Rooms()
+		return len(rooms) == 1
+	})
+	if err := alice.n.RemoveRoomMember(room.ID, "Bob"); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "alice drops bob", func() bool {
+		r, err := alice.st.GetRoom(room.ID)
+		return err == nil && !isMember(r.Members, "Bob")
+	})
+
+	// Bob, now an ex-member, posts anyway over a fresh authenticated session.
+	sc := rawSession(t, alice.n.ln.Addr().String(), bob.id)
+	id, _ := proto.NewID(rand.Reader)
+	sc.Send(proto.Envelope{ //nolint:errcheck
+		T: proto.TypeRoomMsg, ID: id, Room: room.ID,
+		Body: "still here", TS: time.Now().UnixMilli(),
+	})
+	time.Sleep(300 * time.Millisecond)
+	sc.Close()
+
+	msgs, _ := alice.n.RoomMessages(room.ID, 10)
+	for _, m := range msgs {
+		if m.Body == "still here" {
+			t.Fatal("a removed member's message was accepted")
+		}
 	}
 }
