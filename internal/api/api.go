@@ -65,6 +65,7 @@ func New(a *app.App) *Server {
 	m.HandleFunc("DELETE /api/peers/{name}", s.needNode(s.forget))
 	m.HandleFunc("POST /api/dial", s.needNode(s.dial))
 	m.HandleFunc("POST /api/invite/parse", s.needNode(s.parseInvite))
+	m.HandleFunc("GET /api/invite", s.needNode(s.invite))
 	m.HandleFunc("GET /api/outbox", s.needNode(s.outbox))
 	m.HandleFunc("DELETE /api/outbox/{id}", s.needNode(s.deleteOutbox))
 	m.HandleFunc("GET /api/diagnostics", s.needNode(s.diagnostics))
@@ -356,6 +357,18 @@ func (s *Server) dial(w http.ResponseWriter, r *http.Request, n *node.Node) {
 		return
 	}
 	writeJSON(w, 200, map[string]bool{"ok": true})
+}
+
+// invite returns this device's own invite URI and a QR code for it, for when
+// discovery cannot reach the other device (client isolation, two subnets, a
+// firewall dropping multicast).
+func (s *Server) invite(w http.ResponseWriter, r *http.Request, n *node.Node) {
+	inv, err := n.Invite()
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, 200, inv)
 }
 
 func (s *Server) parseInvite(w http.ResponseWriter, r *http.Request, n *node.Node) {

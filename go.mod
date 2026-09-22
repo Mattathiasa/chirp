@@ -7,6 +7,7 @@ require (
 	github.com/grandcat/zeroconf v1.0.0
 	go.etcd.io/bbolt v1.4.0
 	golang.org/x/crypto v0.31.0
+	rsc.io/qr v0.2.0
 )
 
 require (

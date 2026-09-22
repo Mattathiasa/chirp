@@ -31,6 +31,7 @@ Pinned in `go.mod` / `go.sum`:
 | `github.com/grandcat/zeroconf` | MIT | direct |
 | `go.etcd.io/bbolt` | MIT | direct |
 | `golang.org/x/crypto` | BSD-3-Clause | direct |
+| `rsc.io/qr` | BSD-3-Clause | direct |
 | `github.com/cenkalti/backoff` | MIT | indirect |
 | `github.com/miekg/dns` | BSD-3-Clause | indirect |
 | `golang.org/x/net` | BSD-3-Clause | indirect |
@@ -46,3 +47,5 @@ Run `make vuln` for the current vulnerability report.
 - The SVG favicon in `internal/web/static/index.html` is original work.
 - The icons in `app.js` are hand-written inline SVG paths, covered by this
   project's own licence.
+- Invite QR codes are rendered to inline SVG by the daemon using `rsc.io/qr`,
+  so no image is fetched and the CSP needs no `img-src` relaxation.

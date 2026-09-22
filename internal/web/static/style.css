@@ -359,6 +359,25 @@ p { margin: 0; }
 .pal-hint { display: flex; align-items: center; gap: 6px; padding: 10px 18px; border-top: 2px solid var(--rule); font: 500 12px var(--mono); color: var(--mute); }
 .pal-hint kbd { display: inline-grid; place-items: center; min-width: 20px; height: 20px; padding: 0 5px; border: 1px solid var(--rule); border-radius: 6px; background: var(--white); font: inherit; }
 
+/* ---------- nearby ---------- */
+.radar { position: relative; aspect-ratio: 1; max-width: 340px; margin: 6px auto 18px; border: 2px solid var(--ink); border-radius: 50%; background: var(--white); box-shadow: 6px 6px 0 var(--ink); }
+.radar i { position: absolute; inset: 0; margin: auto; border: 2px solid var(--rule); border-radius: 50%; }
+.radar i:nth-child(1) { width: 34%; height: 34%; }
+.radar i:nth-child(2) { width: 64%; height: 64%; }
+.radar i:nth-child(3) { width: 92%; height: 92%; animation: sweep 4s linear infinite; border-color: var(--rule) var(--rule) var(--rule) var(--accent); }
+@keyframes sweep { to { transform: rotate(360deg); } }
+.radar-me { position: absolute; inset: 0; margin: auto; width: 46px; height: 46px; display: grid; place-items: center; border-radius: 15px; background: var(--tang); }
+.blip { position: absolute; width: 42px; height: 42px; transform: translate(-50%, -50%); border: 2px solid var(--ink); border-radius: 14px; background: var(--paper2); display: grid; place-items: center; }
+.blip.on { background: var(--mint); box-shadow: 3px 3px 0 var(--ink); }
+.blip b { font: 800 16px var(--display); }
+.blip:hover { z-index: 1; }
+@media (prefers-reduced-motion: reduce) { .radar i:nth-child(3) { animation: none; } }
+
+/* The invite QR. It is inline SVG, so it scales without a raster asset. */
+.qr { display: flex; justify-content: center; margin: 14px 0; }
+.qr svg { width: 100%; max-width: 260px; height: auto; border: 2px solid var(--ink); border-radius: 16px; }
+
+
 
 
 
