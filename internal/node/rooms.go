@@ -176,7 +176,7 @@ func (n *Node) SendRoomMessage(roomID, body string) (*store.RoomMessage, error) 
 	}
 
 	// Get per-sender sequence number.
-	senderSeq, err := n.nextRoomSenderSeq(roomID, n.id.Name)
+	senderSeq, err := n.cfg.Store.NextRoomSenderSeq(roomID, n.id.Name)
 	if err != nil {
 		return nil, err
 	}
@@ -385,6 +385,19 @@ func (n *Node) RenameRoom(roomID, newName string) error {
 	return nil
 }
 
+// speaksRooms reports whether a peer advertised the rooms capability. Room
+// envelope types are unknown to a peer that predates them, and the decoder
+// rejects unknown types fatally, so sending one would drop the session rather
+// than being politely ignored. Nothing room-shaped goes out without this.
+func speaksRooms(l *link) bool {
+	for _, c := range l.conn.RemoteCaps {
+		if c == proto.CapRooms {
+			return true
+		}
+	}
+	return false
+}
+
 // flushRoomMember sends pending room messages to a specific member.
 func (n *Node) flushRoomMember(member, roomID string) {
 	n.mu.Lock()
@@ -392,6 +405,9 @@ func (n *Node) flushRoomMember(member, roomID string) {
 	n.mu.Unlock()
 	if l == nil {
 		return // offline; messages will be queued in outbox
+	}
+	if !speaksRooms(l) {
+		return // peer is too old for rooms; the outbox keeps the messages
 	}
 
 	pending, err := n.cfg.Store.RoomPending(roomID, member)
@@ -426,6 +442,7 @@ func (n *Node) flushRoomMember(member, roomID string) {
 			Room: roomID,
 			TS:   m.TS.UnixMilli(),
 			Body: m.Body,
+			Seq:  m.SenderSeq,
 		}
 		if err := l.send(e); err != nil {
 			n.logf("room send to %s: %v", member, err)
@@ -440,6 +457,10 @@ func (n *Node) sendRoomEvent(member, roomID, eventType, actor, name string, memb
 	l := n.live[strings.ToLower(member)]
 	n.mu.Unlock()
 	if l == nil {
+		return
+	}
+	if !speaksRooms(l) {
+		n.logf("room event to %s skipped: peer does not speak rooms", member)
 		return
 	}
 
@@ -487,6 +508,9 @@ func (n *Node) handleRoomMsg(l *link, e proto.Envelope) {
 		Body:   e.Body,
 		TS:     time.UnixMilli(e.TS),
 		Status: store.StatusReceived,
+		// Zero when the sender speaks the earlier v2 wire format, which had no
+		// seq field; that simply means the sender's ordering is unknown.
+		SenderSeq: e.Seq,
 	}
 
 	stored, dup, err := n.cfg.Store.AddRoomMessage(m)
@@ -643,21 +667,6 @@ func (n *Node) handleRoomEvent(l *link, e proto.Envelope) {
 		n.cfg.Store.UpdateRoom(*r) //nolint:errcheck
 		n.emit(Event{Type: "room"})
 	}
-}
-
-// nextRoomSenderSeq returns the next per-sender sequence number for a room.
-func (n *Node) nextRoomSenderSeq(roomID, sender string) (uint64, error) {
-	msgs, err := n.cfg.Store.RoomMessages(roomID, 1000)
-	if err != nil {
-		return 0, err
-	}
-	var maxSeq uint64
-	for _, m := range msgs {
-		if m.Sender == sender && m.SenderSeq > maxSeq {
-			maxSeq = m.SenderSeq
-		}
-	}
-	return maxSeq + 1, nil
 }
 
 func isMember(members []string, name string) bool {

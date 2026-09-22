@@ -33,6 +33,7 @@ var (
 	bRoomMsgs   = []byte("roommsgs")   // key: roomID 0x00 seq(8) -> JSON RoomMessage
 	bRoomIdx    = []byte("roomidx")    // key: message id -> roommsgs key
 	bRoomOutbox = []byte("roomoutbox") // key: roomID 0x00 memberName -> JSON {msgID}
+	bRoomSeq    = []byte("roomseq")    // key: roomID 0x00 sender -> uint64 per-sender counter
 	bFiles      = []byte("files")      // key: fileID -> JSON File
 	bFileOutbox = []byte("fileoutbox") // key: fileID -> fileID (pending outbound)
 )
@@ -124,7 +125,7 @@ func openStore(path string, encKey []byte) (*Store, error) {
 		return nil, fmt.Errorf("store: open %s: %w", path, err)
 	}
 	err = db.Update(func(tx *bolt.Tx) error {
-		for _, b := range [][]byte{bMeta, bPeers, bMsgs, bIdx, bOutbox, bRooms, bRoomMsgs, bRoomIdx, bRoomOutbox, bFiles, bFileOutbox} {
+		for _, b := range [][]byte{bMeta, bPeers, bMsgs, bIdx, bOutbox, bRooms, bRoomMsgs, bRoomIdx, bRoomOutbox, bRoomSeq, bFiles, bFileOutbox} {
 			if _, err := tx.CreateBucketIfNotExists(b); err != nil {
 				return err
 			}
@@ -1124,6 +1125,33 @@ func (s *Store) RoomRecordAttempt(msgID string, now time.Time) error {
 		nv, _ := json.Marshal(m)
 		return tx.Bucket(bRoomMsgs).Put(k, nv)
 	})
+}
+
+// NextRoomSenderSeq returns and consumes the next per-sender sequence number
+// for a room. The counter is durable, so it keeps climbing across restarts.
+//
+// It used to be derived by scanning the last 1000 messages for the highest
+// value, which silently restarted the sequence once a room passed 1000
+// messages and produced colliding numbers.
+func (s *Store) NextRoomSenderSeq(roomID, sender string) (uint64, error) {
+	var next uint64
+	err := s.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bRoomSeq)
+		k := roomSeqKey(roomID, sender)
+		if v := b.Get(k); len(v) == 8 {
+			next = binary.BigEndian.Uint64(v)
+		}
+		next++
+		var buf [8]byte
+		binary.BigEndian.PutUint64(buf[:], next)
+		return b.Put(k, buf[:])
+	})
+	return next, err
+}
+
+func roomSeqKey(roomID, sender string) []byte {
+	k := append([]byte(strings.ToLower(roomID)), 0)
+	return append(k, []byte(strings.ToLower(sender))...)
 }
 
 // AddRoomMemberToOutbox adds a pending delivery entry for a member.

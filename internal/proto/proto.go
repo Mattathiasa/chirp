@@ -41,6 +41,7 @@ const (
 	CapReactions = "reactions" // reaction support
 	CapReceipts  = "receipts"  // read receipt support
 	CapTyping    = "typing"    // typing indicator support
+	CapRooms     = "rooms"     // group chat support (roommsg/roomack/roomevent)
 )
 
 // Frame errors.
@@ -119,6 +120,7 @@ type Envelope struct {
 
 	// Room fields.
 	Room        string   `json:"room,omitempty"`        // room ID for room messages
+	Seq         uint64   `json:"seq,omitempty"`         // roommsg: sender's per-room sequence number
 	RoomEvent   string   `json:"roomEvent,omitempty"`   // room event type: "join", "leave", "remove", "rename", "create"
 	RoomName    string   `json:"roomName,omitempty"`    // room rename: new name
 	RoomActor   string   `json:"roomActor,omitempty"`   // room event: who performed the action
@@ -268,6 +270,8 @@ func (e Envelope) validate() error {
 				return fmt.Errorf("proto: bad replyTo: %w", err)
 			}
 		}
+		// seq is optional: a peer speaking the earlier v2 wire format never
+		// sends one, and its absence simply means "ordering unknown".
 	case TypeRoomAck:
 		if err := checkID(e.ID); err != nil {
 			return err
@@ -294,6 +298,9 @@ func (e Envelope) validate() error {
 		}
 	default:
 		return fmt.Errorf("proto: unknown type %q", e.T)
+	}
+	if e.Seq != 0 && e.T != TypeRoomMsg {
+		return fmt.Errorf("proto: %s must not carry seq", e.T)
 	}
 	return nil
 }

@@ -49,7 +49,7 @@ type Conn struct {
 }
 
 // LocalCaps are the capabilities we advertise.
-var LocalCaps = []string{proto.CapFiles, proto.CapReactions, proto.CapReceipts, proto.CapTyping}
+var LocalCaps = []string{proto.CapFiles, proto.CapReactions, proto.CapReceipts, proto.CapTyping, proto.CapRooms}
 
 // Initiator performs the handshake as the dialer.
 func Initiator(c net.Conn, id *identity.Identity) (*Conn, error) {

@@ -2,6 +2,7 @@ package node
 
 import (
 	"crypto/rand"
+	"fmt"
 	"testing"
 	"time"
 
@@ -542,5 +543,127 @@ func TestRemovedMemberCannotKeepPosting(t *testing.T) {
 		if m.Body == "still here" {
 			t.Fatal("a removed member's message was accepted")
 		}
+	}
+}
+
+// The per-sender sequence is the only ordering a receiver has within one
+// sender's stream, so it has to survive the wire. It used to be computed on
+// send and then thrown away, leaving every received message at senderSeq 0.
+func TestRoomSenderSeqReachesTheReceiver(t *testing.T) {
+	hub := discovery.NewHub()
+	alice := newRig(t, hub, "Alice")
+	bob := newRig(t, hub, "Bob")
+	waitFor(t, "sessions", func() bool { return online(alice.n, "Bob") && online(bob.n, "Alice") })
+
+	room, err := alice.n.CreateRoom("Ordered", []string{"Bob"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "bob sees room", func() bool {
+		rooms, _ := bob.n.Rooms()
+		return len(rooms) == 1
+	})
+
+	const n = 5
+	for i := 0; i < n; i++ {
+		if _, err := alice.n.SendRoomMessage(room.ID, fmt.Sprintf("message %d", i)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	waitFor(t, "bob gets them all", func() bool {
+		msgs, _ := bob.n.RoomMessages(room.ID, 20)
+		return len(msgs) == n
+	})
+
+	// Both sides must agree, and the numbers must be 1..n with no gaps.
+	for _, side := range []struct {
+		who string
+		n   *Node
+	}{{"alice", alice.n}, {"bob", bob.n}} {
+		msgs, _ := side.n.RoomMessages(room.ID, 20)
+		var seqs []uint64
+		for _, m := range msgs {
+			if m.Sender != "Alice" {
+				continue
+			}
+			if m.SenderSeq == 0 {
+				t.Fatalf("%s: message %q has no sender sequence", side.who, m.Body)
+			}
+			seqs = append(seqs, m.SenderSeq)
+		}
+		if len(seqs) != n {
+			t.Fatalf("%s: %d sequenced messages, want %d", side.who, len(seqs), n)
+		}
+		for i, got := range seqs {
+			if got != uint64(i+1) {
+				t.Fatalf("%s: sequence %v is not 1..%d", side.who, seqs, n)
+			}
+		}
+	}
+}
+
+// Each sender numbers its own stream, so two senders both start at 1 and
+// neither one's numbering is disturbed by the other.
+func TestRoomSeqIsPerSender(t *testing.T) {
+	hub := discovery.NewHub()
+	alice := newRig(t, hub, "Alice")
+	bob := newRig(t, hub, "Bob")
+	waitFor(t, "sessions", func() bool { return online(alice.n, "Bob") && online(bob.n, "Alice") })
+
+	room, err := alice.n.CreateRoom("Interleaved", []string{"Bob"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "bob sees room", func() bool {
+		rooms, _ := bob.n.Rooms()
+		return len(rooms) == 1
+	})
+
+	for i := 0; i < 3; i++ {
+		alice.n.SendRoomMessage(room.ID, fmt.Sprintf("a%d", i)) //nolint:errcheck
+		bob.n.SendRoomMessage(room.ID, fmt.Sprintf("b%d", i))   //nolint:errcheck
+	}
+	waitFor(t, "alice has all six", func() bool {
+		msgs, _ := alice.n.RoomMessages(room.ID, 20)
+		return len(msgs) == 6
+	})
+
+	msgs, _ := alice.n.RoomMessages(room.ID, 20)
+	per := map[string][]uint64{}
+	for _, m := range msgs {
+		per[m.Sender] = append(per[m.Sender], m.SenderSeq)
+	}
+	for who, seqs := range per {
+		if len(seqs) != 3 {
+			t.Fatalf("%s sent %d messages, want 3", who, len(seqs))
+		}
+		for i, got := range seqs {
+			if got != uint64(i+1) {
+				t.Fatalf("%s's sequence is %v, want [1 2 3]", who, seqs)
+			}
+		}
+	}
+}
+
+// The counter is durable: it used to be recovered by scanning the last 1000
+// messages, so a restart (or a room past 1000 messages) restarted it at 1.
+func TestRoomSeqSurvivesRestart(t *testing.T) {
+	st := newStore(t)
+	roomID, _ := proto.NewID(rand.Reader)
+	for i := uint64(1); i <= 3; i++ {
+		got, err := st.NextRoomSenderSeq(roomID, "Alice")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != i {
+			t.Fatalf("seq %d, want %d", got, i)
+		}
+	}
+	// A different sender in the same room is numbered independently.
+	if got, _ := st.NextRoomSenderSeq(roomID, "Bob"); got != 1 {
+		t.Fatalf("Bob's first seq is %d, want 1", got)
+	}
+	if got, _ := st.NextRoomSenderSeq(roomID, "Alice"); got != 4 {
+		t.Fatalf("Alice's seq after Bob's is %d, want 4", got)
 	}
 }

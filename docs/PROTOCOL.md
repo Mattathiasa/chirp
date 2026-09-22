@@ -64,6 +64,9 @@ Each transport frame carries one ChaCha20-Poly1305 ciphertext of one JSON envelo
 | `read` | `target` (32 hex, message ID) | read receipt for message `target` |
 | `file` | `id` (32 hex), `src` (filename), `size` (bytes, ≤100 MB), `hash` (64 hex SHA-256) | file transfer metadata |
 | `chunk` | `id` (32 hex), `offset` (byte offset), `chunk` (≤32 KB, base64 in JSON) | file data chunk |
+| `roommsg` | `id` (32 hex), `room` (32 hex), `ts`, `body` (1..4096 bytes), `seq` (optional, sender's per-room counter), `replyTo` (optional) | a message to a room |
+| `roomack` | `id` (32 hex), `room` (32 hex) | the receiver has **persisted** room message `id` |
+| `roomevent` | `room` (32 hex), `roomEvent` (`create`/`join`/`leave`/`remove`/`rename`), `roomActor`, `roomName` (rename/create), `roomMembers` (create) | a membership change |
 
 ### Why chunks are 32 KB
 
@@ -73,6 +76,35 @@ tag) and written into a frame whose length prefix is a `uint16`. The budget is
 therefore 65535 bytes for the encrypted envelope, not for the chunk. 32 KB of
 payload encodes to about 43 KB, which fits; 64 KB encodes to about 87 KB, which
 does not. `TestMaxChunkEnvelopeFitsInAFrame` pins this.
+
+### Rooms
+
+A room is **fan-out of one pairwise-encrypted copy per member**. There is no
+shared group key: the sender emits one `roommsg` per member over that member's
+own Noise session. Cost is O(n) per message, and membership is capped at 32.
+
+**What authorises a membership event.** `roomevent` arrives over an
+authenticated session, so the sender's identity is the pinned name on the link.
+That identity — never the `roomActor` field, which is attacker-controlled — is
+what the receiver authorises against:
+
+| Event | Accepted from |
+| --- | --- |
+| `create` | any peer, for a room we do not have and that lists us as a member; for a room we already have, only from its current creator, and only to refresh name and membership |
+| `join`, `remove`, `rename` | the room's creator only |
+| `leave` | the leaving peer, about themselves only |
+
+`roommsg` and `roomack` are accepted only for a room we hold, from a peer who
+is a current member of it. A removed member is therefore rejected on receipt,
+not merely dropped from the send list.
+
+**Ordering.** Each sender keeps a durable per-room counter and stamps it on
+`seq`. Within one sender's stream, `seq` is a gapless total order that survives
+restarts. **There is no global order across senders**: two members sending at
+the same moment produce no defined relative order, and each receiver falls back
+to its own arrival time for display. Clock skew between devices means sender
+`ts` cannot be used for ordering either. `seq` is optional on the wire, and a
+missing one simply means the sender's ordering is unknown.
 
 ### Capabilities
 
@@ -84,10 +116,22 @@ The Hello `caps` field advertises supported features. v2 peers always advertise 
 | `reactions` | Emoji reactions |
 | `receipts` | Read receipts |
 | `typing` | Typing indicators |
+| `rooms` | Group chat (`roommsg`, `roomack`, `roomevent`) |
 
 ### Backward compatibility
 
-A v2 peer connecting to a v1 peer negotiates version 1. The v1 peer ignores unknown envelope types (they are decoded and silently dropped). The v2 peer skips sending v2-only envelope types when `RemoteVersion == 1`.
+A v2 peer connecting to a v1 peer negotiates version 1.
+
+Unknown envelope types are **not** silently dropped. `Decode` sets
+`DisallowUnknownFields` and rejects an unrecognised `t`, and any decode error is
+fatal for the session because the Noise nonce is an implicit counter that cannot
+resynchronise. Sending an envelope type a peer does not know therefore tears the
+session down.
+
+So a newer feature must be gated on the peer advertising its capability, not
+merely on the version number, and adding a field to an existing envelope type is
+equally breaking. Room traffic checks for the `rooms` capability before anything
+room-shaped goes out; the `seq` field rides along inside that capability.
 
 If nothing is read for 30 s the session is declared dead. TCP alone can take minutes to notice a device that vanished from Wi-Fi.
 
