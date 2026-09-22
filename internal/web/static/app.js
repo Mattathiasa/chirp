@@ -41,6 +41,9 @@ const ICONS = {
   spin: '<circle cx="12" cy="12" r="9" stroke-opacity=".25"/><path d="M12 3a9 9 0 0 1 9 9"/>',
   users: '<circle cx="8" cy="9" r="3"/><circle cx="16.5" cy="10" r="2.5"/><path d="M2.5 19c.4-3.2 2.6-5 5.5-5s5.1 1.8 5.5 5"/><path d="M15 14.2c2.6.2 4.2 1.9 4.5 4.8"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
+  clip: '<path d="M20 11l-8.5 8.5a4.5 4.5 0 0 1-6.4-6.4L13 4.8a3 3 0 0 1 4.2 4.2l-8 8a1.5 1.5 0 0 1-2.1-2.1l7.6-7.6"/>',
+  file: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/>',
+  download: '<path d="M12 4v11M7 11l5 5 5-5"/><path d="M5 20h14"/>',
 };
 function icon(name, size = 20, cls = '') {
   const s = h('span', { class: cls, style: `display:inline-flex;width:${size}px;height:${size}px;flex:none` });
@@ -70,7 +73,7 @@ const S = {
   setup: null, me: null, peers: [], rooms: [], cur: null, roomCur: null, msgs: [], view: 'chat', panel: false,
   settings: { retentionDays: 0, notify: true, previews: false, typing: false, receipts: false },
   outbox: [], diag: null, invite: null, q: '', connected: true, unread: {}, modal: null, draft: {}, typing: {},
-  reactions: {}, readUpTo: {}, replyTo: null, sentRead: {},
+  reactions: {}, readUpTo: {}, replyTo: null, sentRead: {}, files: [], fileProgress: {},
 };
 const peerByName = (n) => S.peers.find((p) => p.name.toLowerCase() === (n || '').toLowerCase());
 const curPeer = () => peerByName(S.cur);
@@ -195,6 +198,9 @@ async function loadMessages() {
   if (!S.cur) return;
   try { S.msgs = await getJSON(`/api/peers/${enc(S.cur)}/messages`); renderMain(true); } catch { /* ignore */ }
 }
+async function loadFiles() {
+  try { S.files = await getJSON('/api/files'); } catch { /* ignore */ }
+}
 async function loadRooms() {
   try { S.rooms = await getJSON('/api/rooms'); } catch { /* ignore */ }
   renderSide(); renderMain(); renderPanel();
@@ -224,6 +230,17 @@ function connectEvents() {
         notify(e.peer, m.body);
       }
       if (S.view !== 'chat') { if (S.view === 'network') refreshNetworkSoon(); }
+    }
+    if (e.type === 'file' || e.type === 'fileOutbox') {
+      loadFiles().then(() => renderMain(true));
+    }
+    if (e.type === 'fileProgress' && e.fileId) {
+      S.fileProgress[e.fileId] = e.progress || 0;
+      if (S.view === 'chat' && S.cur) renderMain(true);
+    }
+    if (e.type === 'fileComplete' && e.fileId) {
+      delete S.fileProgress[e.fileId];
+      loadFiles().then(() => renderMain(true));
     }
     if (e.type === 'reaction' && e.target) {
       (S.reactions[e.target] = S.reactions[e.target] || []).push(e.emoji);
@@ -264,7 +281,7 @@ let netTimer;
 function refreshNetworkSoon() { clearTimeout(netTimer); netTimer = setTimeout(async () => { await Promise.all([loadOutbox(), loadDiag()]); if (S.view === 'network') renderMain(); }, 200); }
 
 // ---------- layout ----------
-let $shell, $rail, $nav, $side, $main, $panel, composer, $ta, $sendBtn, $search;
+let $shell, $rail, $nav, $side, $main, $panel, composer, $ta, $sendBtn, $search, $attachBtn, $fileInput;
 let $sideHead, $sideOnline, $sideSearch, $sideBody;
 
 function mountShell() {
@@ -287,12 +304,16 @@ function mountShell() {
 
 function buildComposer() {
   $ta = h('textarea', { rows: 1, 'aria-label': 'Message', placeholder: 'Message', maxlength: 4000 });
+  $fileInput = h('input', { type: 'file', class: 'sr', 'aria-hidden': 'true', tabindex: '-1' });
+  $fileInput.addEventListener('change', () => { if ($fileInput.files[0]) uploadFile($fileInput.files[0]); });
+  $attachBtn = h('button', { class: 'attach', type: 'button', 'aria-label': 'Attach a file', title: 'Attach a file',
+    onclick: () => $fileInput.click() }, icon('clip', 21));
   $sendBtn = h('button', { class: 'send', 'aria-label': 'Send message', type: 'button' }, icon('send', 22));
   const grow = () => { $ta.style.height = 'auto'; $ta.style.height = Math.min($ta.scrollHeight, 140) + 'px'; };
   $ta.addEventListener('input', () => { grow(); if (S.cur) { S.draft[S.cur] = $ta.value; maybeSendTyping(); } else if (S.roomCur) S.draft['r:' + S.roomCur] = $ta.value; syncSend(); });
   $ta.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); sendCurrent(); } });
   $sendBtn.addEventListener('click', sendCurrent);
-  composer = h('div', { class: 'composer' }, $ta, $sendBtn);
+  composer = h('div', { class: 'composer' }, $fileInput, $attachBtn, $ta, $sendBtn);
 }
 function syncSend() { $sendBtn.disabled = $ta.disabled || !$ta.value.trim(); }
 
@@ -340,6 +361,86 @@ async function sendRoomMsg() {
 
 // The composer is shared between one-to-one chats and rooms.
 function sendCurrent() { return S.roomCur ? sendRoomMsg() : sendMsg(); }
+
+// ---------- files ----------
+function fmtBytes(n) {
+  if (!n) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let i = 0;
+  let v = n;
+  while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+  return `${v >= 10 || i === 0 ? Math.round(v) : v.toFixed(1)} ${units[i]}`;
+}
+
+// Files belong to a peer, not to a room: SendFile is one to one.
+async function uploadFile(file) {
+  if (!S.cur) { toast('Open a chat first', true); return; }
+  if (file.size > 100 * 1024 * 1024) { toast('Files are capped at 100 MB', true); return; }
+  const fd = new FormData();
+  fd.append('file', file, file.name);
+  try {
+    // Not the api() helper: this body is multipart, not JSON.
+    const r = await fetch(`/api/peers/${enc(S.cur)}/file`, {
+      method: 'POST', headers: { 'X-Chirp': '1' }, body: fd,
+    });
+    if (!r.ok) {
+      let msg = r.statusText;
+      try { msg = (await r.json()).error || msg; } catch { /* not JSON */ }
+      throw new Error(msg);
+    }
+    $fileInput.value = '';
+    await loadFiles();
+    renderMain(true);
+  } catch (e) { toast(e.message, true); }
+}
+
+// Everything the current conversation holds, messages and transfers together,
+// oldest first, so a file sits where it was sent rather than in a separate list.
+function threadItems(peerName) {
+  const items = S.msgs.map((m) => ({ ts: m.ts, kind: 'msg', m }));
+  for (const f of S.files) {
+    if (f.peer.toLowerCase() !== peerName.toLowerCase()) continue;
+    items.push({ ts: f.ts, kind: 'file', f });
+  }
+  items.sort((a, b) => new Date(a.ts) - new Date(b.ts));
+  return items;
+}
+
+function fileEl(f) {
+  const mine = f.dir === 'out';
+  const live = S.fileProgress[f.id];
+  const moved = mine ? (f.sent || 0) : (f.received || 0);
+  const frac = live != null ? live : (f.size ? moved / f.size : 0);
+  const done = f.status === 'complete' || f.status === 'sent';
+  const failed = f.status === 'failed';
+
+  let note;
+  if (failed) note = 'Rejected: the bytes did not match the sender\u2019s checksum';
+  else if (done) note = `${fmtBytes(f.size)} \u00b7 ${mine ? 'Sent' : 'Verified'}`;
+  else if (frac > 0) note = `${fmtBytes(Math.round(frac * f.size))} of ${fmtBytes(f.size)} \u00b7 ${mine ? 'Sending' : 'Receiving'}\u2026`;
+  else note = `${fmtBytes(f.size)} \u00b7 ${mine ? 'Queued' : 'Waiting\u2026'}`;
+
+  const bar = done || failed ? null : h('div', { class: 'bar', role: 'progressbar',
+    'aria-valuemin': '0', 'aria-valuemax': '100', 'aria-valuenow': String(Math.round(frac * 100)),
+    'aria-label': `${f.name} transfer progress` },
+    h('i', { style: `width:${Math.max(2, Math.round(frac * 100))}%` }));
+
+  return h('div', { class: 'm ' + (mine ? 'me' : 'them') },
+    h('div', { class: 'filecard' + (failed ? ' bad' : '') },
+      h('span', { class: 'fic' }, icon(failed ? 'warn' : 'file', 20)),
+      h('div', { class: 'grow' },
+        h('div', { class: 't' }, f.name),
+        h('div', { class: 'n' }, note),
+        bar),
+      // Only a verified inbound file can be opened, and only by an explicit
+      // click: the daemon serves it as an attachment so the browser never
+      // renders whatever the sender chose to call a .png.
+      !mine && f.status === 'complete'
+        ? h('a', { class: 'iconbtn', href: `/api/files/${enc(f.id)}/data`, download: f.name,
+            'aria-label': `Save ${f.name}`, title: 'Save' }, icon('download', 18))
+        : null),
+    h('div', { class: 'stat' }, fmtTime(f.ts)));
+}
 
 // ---------- rooms ----------
 // Each room tile takes a colour from the palette, keyed off its id. The text
@@ -477,6 +578,9 @@ function viewRoomThread(keepScroll) {
 
   $ta.disabled = false;
   $ta.placeholder = `Message ${r.name}`;
+  // Transfers are one to one; a room has no fan-out path for them yet.
+  $attachBtn.disabled = true;
+  $attachBtn.title = 'Files can only be sent in a one-to-one chat';
   syncSend();
 
   const el = h('div', { style: 'display:contents' }, head, list, composer);
@@ -720,7 +824,8 @@ async function openPeer(name) {
   S.cur = name; S.view = 'chat'; S.roomCur = null; S.replyTo = null; S.unread[name.toLowerCase()] = 0; S.msgs = [];
   $ta.value = S.draft[name] || '';
   renderSide(); renderMain(); renderPanel();
-  await loadMessages();
+  await Promise.all([loadMessages(), loadFiles()]);
+  renderMain(true);
   $ta.focus();
 }
 async function openRoom(id) {
@@ -777,10 +882,11 @@ function renderMain(keepScroll) {
       h('button', { class: 'btn', onclick: () => { S.panel = true; renderPanel(); } }, 'Verify'));
   }
 
+  const items = threadItems(p.name);
   const list = h('div', { class: 'msgs', role: 'log', 'aria-label': `Conversation with ${p.name}` },
     h('div', { class: 'notice' }, icon('lock', 14), 'End-to-end encrypted · Noise XX'),
-    S.msgs.length === 0 && p.trust !== 'unknown' ? h('div', { class: 'notice' }, 'No messages yet. Say hello.') : null,
-    ...S.msgs.map((m) => msgEl(m, p)));
+    items.length === 0 && p.trust !== 'unknown' ? h('div', { class: 'notice' }, 'No messages yet. Say hello.') : null,
+    ...items.map((it) => (it.kind === 'file' ? fileEl(it.f) : msgEl(it.m, p))));
 
   if (S.typing[p.name.toLowerCase()]) {
     list.append(h('div', { class: 'm them' }, h('div', { class: 'bubble typing' },
@@ -797,6 +903,8 @@ function renderMain(keepScroll) {
   $ta.placeholder = p.trust === 'changed' ? 'Review the changed key to continue' : p.trust === 'unknown' ? 'Establishing a secure session…' : p.online ? 'Message' : `Message ${p.name} (queued until they are back)`;
   $ta.value = $ta.value; syncSend();
 
+  $attachBtn.disabled = locked;
+  $attachBtn.title = locked ? 'Not while this conversation is locked' : 'Attach a file';
   $main.replaceChildren(...[banner, head, notice, list, replyStrip, composer].filter(Boolean));
   maybeSendReadReceipt();
   const l = $main.querySelector('.msgs');

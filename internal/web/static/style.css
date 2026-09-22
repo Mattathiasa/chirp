@@ -165,6 +165,25 @@ h1, h2, h3 { font-family: var(--display); font-weight: 800; letter-spacing: -.04
 .narrow-only { display: none; gap: 6px; flex: none; }
 /* The scrolling half of the conversation pane; the header above it is fixed. */
 .side-body { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+
+/* ---------- file transfers ---------- */
+.composer .attach { width: 42px; height: 42px; flex: none; display: grid; place-items: center; border: 0; border-radius: 14px; background: transparent; color: var(--mute); }
+.composer .attach:hover:not(:disabled) { background: var(--paper2); color: var(--ink); }
+.composer .attach:disabled { opacity: .4; cursor: not-allowed; }
+
+.filecard { display: flex; align-items: center; gap: 12px; min-width: 260px; max-width: 420px; padding: 12px 14px; border: 2px solid var(--ink); border-radius: 20px; background: var(--white); box-shadow: 4px 4px 0 var(--ink); }
+.filecard.bad { border-color: var(--red); box-shadow: 4px 4px 0 var(--red); }
+.filecard .fic { display: grid; place-items: center; width: 40px; height: 40px; flex: none; border-radius: 13px; background: var(--butter); color: var(--ink); }
+.filecard.bad .fic { background: var(--red); color: #fff; }
+.filecard .grow { flex: 1; min-width: 0; }
+.filecard .t { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.filecard .n { font: 500 12px var(--mono); color: var(--mute); }
+.filecard .bar { height: 6px; margin-top: 8px; border-radius: 3px; background: var(--paper2); overflow: hidden; }
+.filecard .bar i { display: block; height: 100%; background: var(--cobalt); transition: width .2s ease; }
+.filecard a.iconbtn { flex: none; text-decoration: none; display: grid; place-items: center; }
+@media (prefers-reduced-motion: reduce) { .filecard .bar i { transition: none; } }
+@media (max-width: 760px) { .filecard { min-width: 0; max-width: 100%; } }
+
 .iconbtn.sm { width: 36px; height: 36px; border-radius: 12px; }
 .searchwrap { display: flex; align-items: center; gap: 8px; margin: 8px 20px; padding: 0 16px; height: 48px; border-radius: 16px; background: var(--white); border: 2px solid var(--ink); color: var(--mute); }
 .searchwrap:focus-within { border-color: var(--cobalt); box-shadow: 0 4px 0 var(--cobalt); }

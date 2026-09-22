@@ -120,6 +120,17 @@ func autoReply(ctx context.Context, n *node.Node) {
 	}
 }
 
+// demoAttachment is a few hundred KB of plausible text: large enough to take
+// several chunks and show a progress bar, small enough not to slow the demo.
+func demoAttachment() []byte {
+	var b []byte
+	const line = "14:02  agreed: the daemon stays on loopback, the UI talks to it over SSE\n"
+	for len(b) < 400<<10 {
+		b = append(b, line...)
+	}
+	return b
+}
+
 func bot(ctx context.Context, hub *discovery.Hub, dir, name string, delay time.Duration, greet bool) {
 	time.Sleep(delay)
 	n, st, err := newBot(hub, dir, name, nil)
@@ -141,6 +152,13 @@ func bot(ctx context.Context, hub *discovery.Hub, dir, name string, delay time.D
 				for _, p := range ps {
 					if p.Online && !botNames[p.Name] {
 						_, _ = n.Send(p.Name, "Hey, are you on the same Wi-Fi? Just testing Chirp.")
+						// Send something too, so the demo shows a transfer
+						// arriving, being verified and being offered to save,
+						// which is otherwise invisible until you send one.
+						time.Sleep(1200 * time.Millisecond)
+						if _, err := n.SendFile(p.Name, "meeting-notes.txt", demoAttachment()); err != nil {
+							log.Printf("demo attachment: %v", err)
+						}
 						return
 					}
 				}

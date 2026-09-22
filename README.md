@@ -17,7 +17,7 @@ go mod tidy        # first time only, writes go.sum
 make demo          # scripted peers, works with no network at all
 ```
 
-Open <http://127.0.0.1:7777>. Four bots are in the room: Alex and Sam chat back, Priya drops offline every minute (send her something and watch it queue in the outbox, then deliver), and after about 45 seconds Dana's key changes so you can see the trust warning.
+Open <http://127.0.0.1:7777>. Four bots are in the room: Alex and Sam chat back, Priya drops offline every minute (send her something and watch it queue in the outbox, then deliver), and after about 45 seconds Dana's key changes so you can see the trust warning. Alex also sends a small file, so you can watch a transfer arrive, get verified against its checksum and be offered to save.
 
 To use it for real, on two machines on the same network:
 
