@@ -65,7 +65,8 @@
 
 * No mobile client yet (Flutter, next phase).
 * Display-name renaming is not supported: the name is the pinning handle.
-* Messages are stored unencrypted at rest.
+* Message bodies, pinned peers, room names and file contents are encrypted at rest with a key derived from the identity key via HKDF. That key lives in the same directory, so this defends a copied database or an unencrypted backup, not a reader of the user's own account. A passphrase mode would fix that and is not implemented.
+* File transfer is not resumable. An interrupted transfer restarts from zero; the receiver truncates any partial and verifies the whole file against the sender's SHA-256 before it can be read.
 * Pruning removes dedup entries with the message; a very late retransmit of a pruned message would reappear. Retention windows are far longer than any retry window.
 * Real Wi-Fi behaviour (client isolation, multicast filtering, firewalls) cannot be simulated. The Network screen and README explain the usual causes.
 

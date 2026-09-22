@@ -67,20 +67,28 @@ Read these before you rely on it for anything.
 * **First contact is trust-on-first-use.** Someone present when you first meet a name can impersonate it. Verify in person.
 * **The six words are a convenience, not a proof.** They are 48 bits derived from one public key. Compare the full fingerprint for anything that matters.
 * **The name is the identity handle.** Two people who pick the same name collide and one shows up as a key change. There is no rename yet.
-* **Messages are plaintext on disk** (file mode `0600`). Anyone who can read your user account's files, or an unencrypted disk backup, can read them.
+* **Encryption at rest protects a stolen disk, not a stolen session.** Message bodies, pinned peers, room names and received files are encrypted with a key derived from your identity key, which sits in the same data directory at mode `0600`. So a copied database or an unencrypted backup yields nothing, but anyone who can read your user account's files can derive the key and read everything. It is not a passphrase.
 * **Not audited.** It uses well-known primitives (`flynn/noise`, `x/crypto`) in a standard pattern, but the composition is mine and has had no outside review.
 * **Some networks will not work.** Guest Wi-Fi with client isolation, VLAN splits and firewalls that drop UDP 5353 or the chosen TCP port all prevent discovery or connection. The Network screen lists the usual causes.
-* **Desktop and browser only for now.** The Flutter mobile client is the next phase. It will speak this same protocol.
+* **Desktop and browser only for now.** The Flutter mobile client is the next phase. It will speak this same protocol; `docs/testvectors.json` exists so it can be checked against this implementation byte for byte.
+* **Rooms have no shared key and no global order.** Every room message is sent as one separately encrypted copy per member, so a member who leaves keeps everything they already received, and two people sending at the same moment have no defined relative order. Both limits are spelled out in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+* **File transfer does not resume.** A transfer interrupted midway starts again from the beginning. Chunks are verified end to end, so a corrupted one is rejected rather than stored.
 * **Transport is TCP, not UDP.** The original brief called for UDP. TCP already provides the ordering Noise needs and the retransmission a reliable-UDP layer would have to reinvent. See the architecture doc for why, and where a datagram transport would plug in.
 
 ## Development
 
 ```sh
-make race    # go test -race ./...   (what CI runs)
-make fuzz    # 30 s of fuzzing on the wire decoder
+make race         # go test -race ./...   (what CI runs)
+make fuzz         # 30 s of fuzzing on the wire decoder
 make vet fmt
-make vuln    # govulncheck
+make vuln         # govulncheck
+make e2e-install  # one-off: Playwright and its browser
+make e2e          # drives the real UI against cmd/demo, desktop and phone
 ```
+
+`make e2e` runs the browser suite in `e2e/`: onboarding, sending, replying,
+deleting, queued messages, rooms, the invite QR and the command palette, plus
+an axe-core scan that fails on any serious accessibility violation.
 
 Layout:
 
@@ -93,8 +101,9 @@ internal/
   session       Noise XX handshake and encrypted channel
   store         bbolt: pins, messages, outbox, settings
   discovery     interface, mDNS, in-memory hub
-  node          the engine
+  node          the engine, rooms, invites and QR
   app, api, web lifecycle, HTTP/SSE, embedded UI
+e2e             Playwright suite driven against cmd/demo
 ```
 
 Real-multicast test (skipped by default, needs a network that allows it):
