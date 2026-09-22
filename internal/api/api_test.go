@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -230,4 +231,56 @@ func TestBackupEndpointRoundTrip(t *testing.T) {
 	if m1.FP != m2.FP || m1.Name != m2.Name {
 		t.Fatalf("restored identity differs: %s vs %s", m1.FP, m2.FP)
 	}
+}
+
+// The UI self-hosts its fonts. Under "default-src 'none'" a missing font-src
+// directive makes the browser refuse every @font-face, silently, so the
+// directive is pinned here along with the rest of the policy.
+func TestFontsAreServableUnderTheCSP(t *testing.T) {
+	c := newClient(t, newApp(t, discovery.NewHub()))
+
+	r, b := c.do("GET", "/fonts/HankenGrotesk-400.woff2", nil, nil)
+	if r.StatusCode != 200 {
+		t.Fatalf("font fetch: %d", r.StatusCode)
+	}
+	if len(b) == 0 {
+		t.Fatal("font body is empty")
+	}
+	if ct := r.Header.Get("Content-Type"); ct != "font/woff2" {
+		t.Errorf("Content-Type = %q, want font/woff2", ct)
+	}
+
+	csp := r.Header.Get("Content-Security-Policy")
+	if !strings.Contains(csp, "default-src 'none'") {
+		t.Fatalf("CSP lost its default-src: %q", csp)
+	}
+	if !strings.Contains(csp, "font-src 'self'") {
+		t.Fatalf("CSP has no font-src, so every self-hosted font is blocked: %q", csp)
+	}
+	// The policy must stay strict in every other respect.
+	for _, forbidden := range []string{"unsafe-inline", "unsafe-eval", "http://", "https://", "*"} {
+		if strings.Contains(csp, forbidden) {
+			t.Errorf("CSP relaxed with %q: %s", forbidden, csp)
+		}
+	}
+}
+
+// Every @font-face URL in the stylesheet must resolve to a file that ships.
+func TestEveryFontFaceURLResolves(t *testing.T) {
+	c := newClient(t, newApp(t, discovery.NewHub()))
+
+	r, css := c.do("GET", "/style.css", nil, nil)
+	if r.StatusCode != 200 {
+		t.Fatalf("style.css: %d", r.StatusCode)
+	}
+	refs := regexp.MustCompile(`url\('([^']+\.woff2?)'\)`).FindAllStringSubmatch(string(css), -1)
+	if len(refs) == 0 {
+		t.Fatal("no @font-face urls found in style.css")
+	}
+	for _, m := range refs {
+		if rr, body := c.do("GET", m[1], nil, nil); rr.StatusCode != 200 || len(body) == 0 {
+			t.Errorf("%s -> %d (%d bytes)", m[1], rr.StatusCode, len(body))
+		}
+	}
+	t.Logf("checked %d font files", len(refs))
 }

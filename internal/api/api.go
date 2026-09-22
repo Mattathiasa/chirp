@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"mime"
 	"net"
 	"net/http"
 	"net/url"
@@ -86,6 +87,11 @@ func New(a *app.App) *Server {
 	m.HandleFunc("DELETE /api/rooms/{id}/members/{name}", s.needNode(s.removeRoomMember))
 	m.HandleFunc("POST /api/rooms/{id}/rename", s.needNode(s.renameRoom))
 
+	// Go's built-in table has no entry for woff2, and a host without a system
+	// mime database would otherwise serve the fonts as octet-stream.
+	_ = mime.AddExtensionType(".woff2", "font/woff2")
+	_ = mime.AddExtensionType(".woff", "font/woff")
+
 	static, _ := fs.Sub(web.Files, "static")
 	m.Handle("GET /", http.FileServerFS(static))
 	return s
@@ -109,7 +115,7 @@ func secure(next http.Handler) http.Handler {
 			return
 		}
 		h := w.Header()
-		h.Set("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
+		h.Set("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("Referrer-Policy", "no-referrer")
 		h.Set("Cache-Control", "no-store")
