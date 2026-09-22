@@ -519,13 +519,31 @@ func (n *Node) handleRoomEvent(l *link, e proto.Envelope) {
 			members = []string{actor, n.id.Name}
 		}
 		members = dedupeMembers(members)
+		if !isMember(members, n.id.Name) {
+			n.logf("room create rejected: %q did not include us in %v", actor, members)
+			return
+		}
+		if len(members) > store.MaxRoomMembers {
+			n.logf("room create rejected: %d members exceeds the cap", len(members))
+			return
+		}
+
 		existing, err := n.cfg.Store.GetRoom(e.Room)
 		if err == nil {
+			// The room is already here. A create event may only ever be a
+			// refresh from the peer who already owns it: applying one from
+			// anybody else would let any member seize the room, rewrite its
+			// membership, and thereby unlock rename, add and remove.
+			if actor != existing.CreatedBy {
+				n.logf("room create rejected: %q is not the creator of %s", actor, e.Room)
+				return
+			}
 			existing.Name = e.RoomName
 			existing.Members = members
-			existing.CreatedBy = actor
 			n.cfg.Store.UpdateRoom(*existing) //nolint:errcheck
 		} else {
+			// First sight of this room. The peer that told us about it is its
+			// creator by definition; it cannot nominate somebody else.
 			room := store.Room{
 				ID:        e.Room,
 				Name:      e.RoomName,
@@ -535,6 +553,7 @@ func (n *Node) handleRoomEvent(l *link, e proto.Envelope) {
 			}
 			if err := n.cfg.Store.CreateRoom(room); err != nil {
 				n.logf("room create: %v", err)
+				return
 			}
 		}
 		n.emit(Event{Type: "room"})

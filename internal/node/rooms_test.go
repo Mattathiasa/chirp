@@ -386,3 +386,50 @@ func TestRoomEventForgedByNonCreator(t *testing.T) {
 		t.Fatalf("members modified by forged events: %v", rs.Members)
 	}
 }
+
+// The "create" event is how a room first appears on a member's device, so it
+// carries an untrusted name, member list and creator. Applied blindly to a
+// room that already exists, it lets any member seize the room: send a create
+// for someone else's room and you become its creator everywhere, which then
+// unlocks rename, add and remove.
+func TestRoomCreateEventCannotSeizeAnExistingRoom(t *testing.T) {
+	hub := discovery.NewHub()
+	alice := newRig(t, hub, "Alice")
+	bob := newRig(t, hub, "Bob")
+
+	waitFor(t, "sessions", func() bool { return online(alice.n, "Bob") && online(bob.n, "Alice") })
+
+	room, err := alice.n.CreateRoom("Alice's room", []string{"Bob"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "bob sees room", func() bool {
+		rooms, _ := bob.n.Rooms()
+		return len(rooms) == 1
+	})
+
+	// Bob re-sends "create" for Alice's room, naming himself the creator and
+	// rewriting the membership.
+	sc := rawSession(t, alice.n.ln.Addr().String(), bob.id)
+	sc.Send(proto.Envelope{ //nolint:errcheck
+		T: proto.TypeRoomEvent, Room: room.ID, RoomEvent: "create",
+		RoomActor: "Bob", RoomName: "Bob's room", RoomMembers: []string{"Bob"},
+		TS: time.Now().UnixMilli(),
+	})
+	time.Sleep(300 * time.Millisecond)
+	sc.Close()
+
+	got, err := alice.st.GetRoom(room.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.CreatedBy != "Alice" {
+		t.Fatalf("a member seized the room: createdBy = %q, want Alice", got.CreatedBy)
+	}
+	if got.Name != "Alice's room" {
+		t.Fatalf("room renamed by a forged create: %q", got.Name)
+	}
+	if !isMember(got.Members, "Alice") || !isMember(got.Members, "Bob") || len(got.Members) != 2 {
+		t.Fatalf("membership rewritten by a forged create: %v", got.Members)
+	}
+}
