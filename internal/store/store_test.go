@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"crypto/rand"
 	"fmt"
 	"os"
@@ -358,5 +359,55 @@ func TestWipeAllStillWorksWithEncryption(t *testing.T) {
 	}
 	if _, err := s.GetPeer("Sam"); err != nil {
 		t.Fatal("peer should survive message wipe")
+	}
+}
+
+// AddMessage encrypts the body before writing it. The Message it hands back is
+// what the node emits to the UI, so it must be plaintext, not the ciphertext
+// that went to disk.
+func TestAddMessageReturnsPlaintext(t *testing.T) {
+	s, _, _ := openEncrypted(t)
+	const body = "returned body must not be ciphertext"
+	stored, dup, err := s.AddMessage(Message{ID: id32(1), Peer: "Sam", Dir: DirIn, Body: body, TS: time.Now(), Status: StatusReceived})
+	if err != nil || dup {
+		t.Fatal(err, dup)
+	}
+	if stored.Body != body {
+		t.Fatalf("AddMessage returned %q, want %q", stored.Body, body)
+	}
+}
+
+// SetKey turns on encryption after the store is already open, which is what
+// app.Open does once it has loaded the identity the key is derived from.
+func TestSetKeyEncryptsLaterWrites(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "chirp.db")
+	s, err := Open(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Key() != nil {
+		t.Fatal("a plain Open must leave the key unset")
+	}
+	key := bytes.Repeat([]byte{7}, 32)
+	s.SetKey(key)
+	if !bytes.Equal(s.Key(), key) {
+		t.Fatal("SetKey did not take")
+	}
+	const secret = "written after the key was set"
+	if _, _, err := s.AddMessage(Message{ID: id32(1), Peer: "Sam", Dir: DirIn, Body: secret, TS: time.Now(), Status: StatusReceived}); err != nil {
+		t.Fatal(err)
+	}
+	ms, err := s.Messages("Sam", 10)
+	if err != nil || len(ms) != 1 || ms[0].Body != secret {
+		t.Fatalf("read back: %v %v", err, ms)
+	}
+	s.Close()
+
+	raw, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(raw, []byte(secret)) {
+		t.Fatal("message body is on disk in plaintext after SetKey")
 	}
 }

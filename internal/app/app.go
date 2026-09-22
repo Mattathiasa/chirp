@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sync"
 
+	"github.com/Mattathiasa/chirp/internal/crypto"
 	"github.com/Mattathiasa/chirp/internal/discovery"
 	"github.com/Mattathiasa/chirp/internal/identity"
 	"github.com/Mattathiasa/chirp/internal/node"
@@ -59,6 +60,7 @@ func Open(cfg Config) (*App, error) {
 		return nil, err
 	}
 	if id != nil {
+		st.SetKey(crypto.DeriveKeyFromIdentity(id.Key.Private))
 		if err := a.startNode(id); err != nil {
 			st.Close()
 			return nil, err
@@ -101,6 +103,7 @@ func (a *App) Setup(name string) error {
 	if err := a.St.SaveIdentity(id); err != nil {
 		return err
 	}
+	a.St.SetKey(crypto.DeriveKeyFromIdentity(id.Key.Private))
 	return a.startNode(id)
 }
 
@@ -116,6 +119,7 @@ func (a *App) Restore(data []byte, passphrase string) error {
 	if err := a.St.SaveIdentity(id); err != nil {
 		return err
 	}
+	a.St.SetKey(crypto.DeriveKeyFromIdentity(id.Key.Private))
 	return a.startNode(id)
 }
 

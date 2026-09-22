@@ -86,6 +86,15 @@ type Store struct {
 	encKey []byte // nil = plaintext
 }
 
+// SetKey sets the encryption key after the store is opened, typically once the
+// identity has been loaded (the key is derived from it). Must be called before
+// concurrent use. Existing plaintext values remain readable; new writes are
+// encrypted.
+func (s *Store) SetKey(key []byte) { s.encKey = key }
+
+// Key returns the current encryption key (nil if unencrypted).
+func (s *Store) Key() []byte { return s.encKey }
+
 // Open opens or creates the database at path without encryption.
 func Open(path string) (*Store, error) {
 	return openStore(path, nil)
@@ -454,6 +463,11 @@ func (s *Store) AddMessage(m Message) (stored Message, dup bool, err error) {
 		stored = m
 		return nil
 	})
+	if err == nil {
+		if derr := s.decryptMessage(&stored); derr != nil {
+			return Message{}, false, derr
+		}
+	}
 	return
 }
 
