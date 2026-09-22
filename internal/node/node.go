@@ -11,6 +11,8 @@ package node
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net"
@@ -467,11 +469,93 @@ func (n *Node) outboxLoop(ctx context.Context) {
 		for _, name := range names {
 			n.flush(name, false)
 		}
+		// Flush file outbox for all pending outbound files.
+		fo, err := n.cfg.Store.FileOutbox()
+		if err == nil {
+			for _, f := range fo {
+				n.goRun(func() { n.flushFile(f.Peer, f.ID) })
+			}
+		}
 	}
 }
 
 // RetryNow forces an immediate resend attempt for a peer.
 func (n *Node) RetryNow(peer string) { n.goRun(func() { n.flush(peer, true) }) }
+
+// SendFile queues a file for a pinned peer and tries to deliver it now.
+func (n *Node) SendFile(peer, name string, data []byte) (string, error) {
+	p, err := n.cfg.Store.GetPeer(peer)
+	if errors.Is(err, store.ErrNotFound) {
+		return "", ErrUnknownPeer
+	} else if err != nil {
+		return "", err
+	}
+	if p.PendingKey != nil {
+		return "", ErrKeyChanged
+	}
+	if len(data) == 0 || int64(len(data)) > proto.MaxFileSize {
+		return "", fmt.Errorf("node: file size out of range")
+	}
+	id, err := proto.NewID(rand.Reader)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(data)
+	hash := hex.EncodeToString(sum[:])
+	if err := n.cfg.Store.AddOutboundFile(id, p.Name, name, hash, data); err != nil {
+		return "", err
+	}
+	n.emit(Event{Type: "fileOutbox", Peer: p.Name, FileSrc: name, FileSize: int64(len(data)), FileID: id})
+	n.goRun(func() { n.flushFile(p.Name, id) })
+	return id, nil
+}
+
+// flushFile sends a pending outbound file to a peer if a session is up.
+func (n *Node) flushFile(peer, fileID string) {
+	l := n.linkFor(peer)
+	if l == nil {
+		return
+	}
+	f, err := n.cfg.Store.GetFile(fileID)
+	if err != nil {
+		return
+	}
+	if f.Status != store.FileQueued && f.Status != store.FileSending {
+		return
+	}
+	data, err := n.cfg.Store.FileBlob(fileID)
+	if err != nil {
+		return
+	}
+	n.cfg.Store.MarkFileSending(fileID) //nolint:errcheck
+	l.flushMu.Lock()
+	defer l.flushMu.Unlock()
+	if err := l.send(proto.Envelope{
+		T: proto.TypeFile, ID: fileID, Src: f.Name, Size: f.Size, Hash: f.Hash,
+	}); err != nil {
+		n.logf("file header to %q: %v", peer, err)
+		l.conn.Close()
+		return
+	}
+	off := int64(0)
+	for off < f.Size {
+		end := off + proto.ChunkSize
+		if end > f.Size {
+			end = f.Size
+		}
+		chunk := data[off:end]
+		if err := l.send(proto.Envelope{
+			T: proto.TypeChunk, ID: fileID, Offset: off, Chunk: chunk,
+		}); err != nil {
+			n.logf("file chunk to %q: %v", peer, err)
+			l.conn.Close()
+			return
+		}
+		off = end
+	}
+	n.cfg.Store.MarkFileSent(fileID) //nolint:errcheck
+	n.emit(Event{Type: "fileComplete", Peer: peer, FileID: fileID, FileSrc: f.Name})
+}
 
 // DeleteFromOutbox drops an undelivered message.
 func (n *Node) DeleteFromOutbox(id string) error {

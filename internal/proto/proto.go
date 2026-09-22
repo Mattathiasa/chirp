@@ -27,8 +27,12 @@ const (
 	MaxFileSize = 100 << 20
 	// IDLen is the byte length of a message ID.
 	IDLen = 16
-	// ChunkSize is the size of each file transfer chunk.
-	ChunkSize = 64 << 10 // 64 KB
+	// ChunkSize is the size of each file transfer chunk. A chunk travels as
+	// base64 inside a JSON envelope, which costs 4 bytes per 3, and the
+	// envelope is then Noise-encrypted (+16 bytes) and written into a frame
+	// bounded by MaxFrame. 32 KB leaves comfortable headroom; 64 KB does not
+	// fit and made every chunk unsendable.
+	ChunkSize = 32 << 10 // 32 KB
 )
 
 // Capabilities advertised in the Hello payload.

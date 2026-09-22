@@ -17,16 +17,21 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/Mattathiasa/chirp/internal/app"
 	"github.com/Mattathiasa/chirp/internal/identity"
 	"github.com/Mattathiasa/chirp/internal/node"
+	"github.com/Mattathiasa/chirp/internal/proto"
 	"github.com/Mattathiasa/chirp/internal/store"
 	"github.com/Mattathiasa/chirp/internal/web"
 )
 
-const maxBody = 64 << 10
+const (
+	maxBody       = int64(64 << 10)
+	maxFileUpload = int64(proto.MaxFileSize) + (1 << 20)
+)
 
 // Server is the HTTP handler set.
 type Server struct {
@@ -62,6 +67,13 @@ func New(a *app.App) *Server {
 	m.HandleFunc("POST /api/messages/clear", s.needNode(s.clearMessages))
 	m.HandleFunc("POST /api/backup", s.needNode(s.backup))
 	m.HandleFunc("GET /api/events", s.needNode(s.events))
+
+	// File routes.
+	m.HandleFunc("POST /api/peers/{name}/file", s.needNode(s.sendFile))
+	m.HandleFunc("GET /api/files", s.needNode(s.files))
+	m.HandleFunc("GET /api/files/{id}", s.needNode(s.getFile))
+	m.HandleFunc("GET /api/files/{id}/data", s.needNode(s.fileData))
+	m.HandleFunc("DELETE /api/files/{id}", s.needNode(s.deleteFile))
 
 	static, _ := fs.Sub(web.Files, "static")
 	m.Handle("GET /", http.FileServerFS(static))
@@ -102,7 +114,11 @@ func secure(next http.Handler) http.Handler {
 					return
 				}
 			}
-			r.Body = http.MaxBytesReader(w, r.Body, maxBody)
+			limit := maxBody
+			if isFileUpload(r) {
+				limit = maxFileUpload
+			}
+			r.Body = http.MaxBytesReader(w, r.Body, limit)
 		}
 		next.ServeHTTP(w, r)
 	})
@@ -139,6 +155,11 @@ func readJSON(w http.ResponseWriter, r *http.Request, v any) bool {
 		return false
 	}
 	return true
+}
+
+// isFileUpload reports whether the request uploads a file (larger body limit).
+func isFileUpload(r *http.Request) bool {
+	return strings.Contains(r.URL.Path, "/file") && r.Method == http.MethodPost
 }
 
 func fail(w http.ResponseWriter, err error) {
@@ -433,4 +454,93 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request, n *node.Node) {
 			fl.Flush()
 		}
 	}
+}
+
+// ---- room handlers ----
+
+func (s *Server) sendFile(w http.ResponseWriter, r *http.Request, n *node.Node) {
+	if err := r.ParseMultipartForm(maxFileUpload); err != nil {
+		writeErr(w, http.StatusBadRequest, "could not parse upload: "+err.Error())
+		return
+	}
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "no file in upload: "+err.Error())
+		return
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, proto.MaxFileSize+1))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "could not read upload: "+err.Error())
+		return
+	}
+	name := sanitizeFilename(header.Filename)
+	id, err := n.SendFile(r.PathValue("name"), name, data)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]string{"id": id, "name": name})
+}
+
+func sanitizeFilename(name string) string {
+	if name == "" {
+		return "file"
+	}
+	// Strip directory components.
+	if i := strings.LastIndexByte(name, '/'); i >= 0 {
+		name = name[i+1:]
+	}
+	if i := strings.LastIndexByte(name, '\\'); i >= 0 {
+		name = name[i+1:]
+	}
+	if name == "" || name == "." || name == ".." {
+		return "file"
+	}
+	return name
+}
+
+func (s *Server) files(w http.ResponseWriter, r *http.Request, n *node.Node) {
+	fs, err := n.Files()
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	if fs == nil {
+		fs = []store.File{}
+	}
+	writeJSON(w, 200, fs)
+}
+
+func (s *Server) getFile(w http.ResponseWriter, r *http.Request, n *node.Node) {
+	f, err := n.FileMeta(r.PathValue("id"))
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, 200, f)
+}
+
+func (s *Server) fileData(w http.ResponseWriter, r *http.Request, n *node.Node) {
+	data, err := n.FileData(r.PathValue("id"))
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	f, _ := n.FileMeta(r.PathValue("id"))
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(data)))
+	if f != nil && f.Name != "" {
+		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename=%q`, sanitizeFilename(f.Name)))
+	}
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(data)
+}
+
+func (s *Server) deleteFile(w http.ResponseWriter, r *http.Request, n *node.Node) {
+	if err := n.DeleteFile(r.PathValue("id")); err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, 200, map[string]bool{"ok": true})
 }

@@ -197,6 +197,29 @@ func (n *Node) Search(query string, limit int) ([]store.SearchResult, error) {
 	return n.cfg.Store.Search(query, limit)
 }
 
+// Files returns all stored files (inbound complete + outbound).
+func (n *Node) Files() ([]store.File, error) { return n.cfg.Store.ListFiles() }
+
+// OutboundFiles returns pending/sending outbound files.
+func (n *Node) OutboundFiles() ([]store.File, error) {
+	return n.cfg.Store.FileOutbox()
+}
+
+// FileData returns the decrypted file data for a completed file.
+func (n *Node) FileData(id string) ([]byte, error) { return n.cfg.Store.FileData(id) }
+
+// FileMeta returns metadata for a file.
+func (n *Node) FileMeta(id string) (*store.File, error) { return n.cfg.Store.GetFile(id) }
+
+// DeleteFile removes a file and its data.
+func (n *Node) DeleteFile(id string) error {
+	if err := n.cfg.Store.DeleteFile(id); err != nil {
+		return err
+	}
+	n.emit(Event{Type: "peers"})
+	return nil
+}
+
 // DeleteMessage removes a message locally (delete-for-me).
 func (n *Node) DeleteMessage(id string) error {
 	if err := n.cfg.Store.DeleteMessage(id); err != nil {

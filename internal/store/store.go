@@ -10,6 +10,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -22,11 +24,13 @@ import (
 )
 
 var (
-	bMeta   = []byte("meta")
-	bPeers  = []byte("peers")
-	bMsgs   = []byte("msgs")   // key: peerKey 0x00 seq(8)
-	bIdx    = []byte("msgidx") // key: message id -> msgs key
-	bOutbox = []byte("outbox") // key: message id -> msgs key (pending outbound)
+	bMeta       = []byte("meta")
+	bPeers      = []byte("peers")
+	bMsgs       = []byte("msgs")       // key: peerKey 0x00 seq(8)
+	bIdx        = []byte("msgidx")     // key: message id -> msgs key
+	bOutbox     = []byte("outbox")     // key: message id -> msgs key (pending outbound)
+	bFiles      = []byte("files")      // key: fileID -> JSON File
+	bFileOutbox = []byte("fileoutbox") // key: fileID -> fileID (pending outbound)
 )
 
 // Message directions and statuses.
@@ -82,8 +86,9 @@ func DefaultSettings() Settings {
 
 // Store wraps a bbolt DB with optional encryption at rest.
 type Store struct {
-	db     *bolt.DB
-	encKey []byte // nil = plaintext
+	db       *bolt.DB
+	encKey   []byte // nil = plaintext
+	filesDir string // on-disk encrypted file storage
 }
 
 // SetKey sets the encryption key after the store is opened, typically once the
@@ -115,7 +120,7 @@ func openStore(path string, encKey []byte) (*Store, error) {
 		return nil, fmt.Errorf("store: open %s: %w", path, err)
 	}
 	err = db.Update(func(tx *bolt.Tx) error {
-		for _, b := range [][]byte{bMeta, bPeers, bMsgs, bIdx, bOutbox} {
+		for _, b := range [][]byte{bMeta, bPeers, bMsgs, bIdx, bOutbox, bFiles, bFileOutbox} {
 			if _, err := tx.CreateBucketIfNotExists(b); err != nil {
 				return err
 			}
@@ -126,7 +131,9 @@ func openStore(path string, encKey []byte) (*Store, error) {
 		db.Close()
 		return nil, err
 	}
-	return &Store{db: db, encKey: encKey}, nil
+	filesDir := filepath.Join(filepath.Dir(path), "files")
+	_ = os.MkdirAll(filesDir, 0o700)
+	return &Store{db: db, encKey: encKey, filesDir: filesDir}, nil
 }
 
 // Close closes the database.

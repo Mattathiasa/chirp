@@ -132,3 +132,31 @@ func FuzzReadFrame(f *testing.F) {
 		}
 	})
 }
+
+// A full-size chunk must survive base64 expansion, the JSON envelope, the
+// Noise tag and still fit in one frame. Getting this wrong makes every file
+// transfer fail with "frame too large", so it is pinned by a test.
+func TestMaxChunkEnvelopeFitsInAFrame(t *testing.T) {
+	const noiseTag = 16
+	e := Envelope{
+		T:      TypeChunk,
+		ID:     "ffffffffffffffffffffffffffffffff",
+		Offset: MaxFileSize - ChunkSize,
+		Chunk:  bytes.Repeat([]byte{0xFF}, ChunkSize),
+	}
+	b, err := Encode(e)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(b)+noiseTag > MaxFrame {
+		t.Fatalf("a %d-byte chunk encodes to %d bytes, which with the Noise tag exceeds MaxFrame (%d)",
+			ChunkSize, len(b), MaxFrame)
+	}
+	got, err := Decode(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Chunk) != ChunkSize {
+		t.Fatalf("chunk round-trip length %d, want %d", len(got.Chunk), ChunkSize)
+	}
+}

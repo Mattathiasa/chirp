@@ -63,7 +63,16 @@ Each transport frame carries one ChaCha20-Poly1305 ciphertext of one JSON envelo
 | `typing` | none | ephemeral typing indicator, not persisted |
 | `read` | `target` (32 hex, message ID) | read receipt for message `target` |
 | `file` | `id` (32 hex), `src` (filename), `size` (bytes, ≤100 MB), `hash` (64 hex SHA-256) | file transfer metadata |
-| `chunk` | `id` (32 hex), `offset` (byte offset), `chunk` (≤64 KB, base64 in JSON) | file data chunk |
+| `chunk` | `id` (32 hex), `offset` (byte offset), `chunk` (≤32 KB, base64 in JSON) | file data chunk |
+
+### Why chunks are 32 KB
+
+A chunk is carried as base64 inside the JSON envelope, which costs four bytes
+for every three, and the envelope is then Noise-encrypted (+16 bytes for the
+tag) and written into a frame whose length prefix is a `uint16`. The budget is
+therefore 65535 bytes for the encrypted envelope, not for the chunk. 32 KB of
+payload encodes to about 43 KB, which fits; 64 KB encodes to about 87 KB, which
+does not. `TestMaxChunkEnvelopeFitsInAFrame` pins this.
 
 ### Capabilities
 

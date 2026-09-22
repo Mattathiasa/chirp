@@ -9,7 +9,7 @@ import (
 
 // Event is pushed to subscribers (the SSE endpoint).
 type Event struct {
-	Type    string         `json:"type"` // "peers" | "message" | "status" | "outbox" | "reaction" | "typing" | "read" | "file" | "fileProgress" | "fileComplete" | "me"
+	Type    string         `json:"type"` // "peers" | "message" | "status" | "outbox" | "reaction" | "typing" | "read" | "file" | "fileProgress" | "fileComplete" | "me" | "fileOutbox"
 	Peer    string         `json:"peer,omitempty"`
 	Message *store.Message `json:"message,omitempty"`
 
@@ -18,6 +18,7 @@ type Event struct {
 	Target string `json:"target,omitempty"` // message ID being reacted to
 
 	// File transfer fields
+	FileID   string  `json:"fileId,omitempty"`
 	FileSrc  string  `json:"fileSrc,omitempty"`
 	FileSize int64   `json:"fileSize,omitempty"`
 	FileHash string  `json:"fileHash,omitempty"`

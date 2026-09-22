@@ -17,11 +17,14 @@ type link struct {
 	peer  string // pinned display name
 	since time.Time
 
-	flushMu  sync.Mutex // serialises outbox flushes on this link
-	fileHash string     // hash of in-progress file transfer
-	fileSize int64
-	fileName string
-	fileOff  int64
+	flushMu sync.Mutex // serialises outbox flushes on this link
+
+	// Inbound file reception state.
+	rxFileID   string
+	rxFileOff  int64
+	rxFileHash string
+	rxFileSize int64
+	rxFileName string
 }
 
 func newLink(n *Node, c *session.Conn, peer string) *link {
@@ -119,21 +122,39 @@ func (l *link) readLoop(ctx context.Context) {
 		case proto.TypeRead:
 			l.n.emit(Event{Type: "read", Peer: l.peer, Target: e.Target})
 		case proto.TypeFile:
-			l.fileHash = e.Hash
-			l.fileSize = e.Size
-			l.fileName = e.Src
-			l.fileOff = 0
-			l.n.emit(Event{Type: "file", Peer: l.peer, FileSrc: e.Src, FileSize: e.Size, FileHash: e.Hash})
+			// Start a new reception. BeginReceive truncates any previous partial.
+			l.rxFileID = e.ID
+			l.rxFileOff = 0
+			l.rxFileHash = e.Hash
+			l.rxFileSize = e.Size
+			l.rxFileName = e.Src
+			if err := l.n.cfg.Store.BeginReceive(e.ID, l.peer, e.Src, e.Hash, e.Size); err != nil {
+				l.n.logf("begin receive %s: %v", e.ID, err)
+				l.conn.Close()
+				return
+			}
+			l.n.emit(Event{Type: "file", Peer: l.peer, FileID: e.ID, FileSrc: e.Src, FileSize: e.Size, FileHash: e.Hash})
 		case proto.TypeChunk:
-			l.fileOff += int64(len(e.Chunk))
-			progress := float64(l.fileOff) / float64(l.fileSize)
-			l.n.emit(Event{Type: "fileProgress", Peer: l.peer, FileHash: l.fileHash, Progress: progress})
-			if l.fileOff >= l.fileSize {
-				l.n.emit(Event{Type: "fileComplete", Peer: l.peer, FileHash: l.fileHash, FileSrc: l.fileName})
-				l.fileHash = ""
-				l.fileSize = 0
-				l.fileName = ""
-				l.fileOff = 0
+			if e.ID != l.rxFileID {
+				continue // chunk for an unknown/older transfer; ignore
+			}
+			l.rxFileOff += int64(len(e.Chunk))
+			if _, err := l.n.cfg.Store.WriteChunk(e.ID, e.Offset, e.Chunk); err != nil {
+				l.n.logf("write chunk %s: %v", e.ID, err)
+			}
+			progress := float64(l.rxFileOff) / float64(l.rxFileSize)
+			l.n.emit(Event{Type: "fileProgress", Peer: l.peer, FileID: e.ID, FileHash: l.rxFileHash, Progress: progress})
+			if l.rxFileOff >= l.rxFileSize {
+				if err := l.n.cfg.Store.CompleteFile(e.ID); err != nil {
+					l.n.logf("complete file %s: %v", e.ID, err)
+				} else {
+					l.n.emit(Event{Type: "fileComplete", Peer: l.peer, FileID: e.ID, FileHash: l.rxFileHash, FileSrc: l.rxFileName})
+				}
+				l.rxFileID = ""
+				l.rxFileOff = 0
+				l.rxFileHash = ""
+				l.rxFileSize = 0
+				l.rxFileName = ""
 			}
 		}
 	}
