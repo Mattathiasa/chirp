@@ -1,4 +1,4 @@
-.PHONY: build run demo test race fuzz vet fmt lint vuln e2e e2e-install clean
+.PHONY: build run demo test race fuzz vet fmt lint vuln e2e e2e-install screenshots clean
 
 BIN     := bin
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
@@ -37,6 +37,9 @@ e2e-install:      ## one-off: fetch Playwright and its browser
 
 e2e: build        ## drive the real UI against cmd/demo, desktop and phone
 	cd e2e && npx playwright test
+
+screenshots: build ## recapture docs/img from the real UI
+	cd e2e && CHIRP_SHOTS=1 npx playwright test --project=desktop --workers=1
 
 clean:
 	rm -rf $(BIN)

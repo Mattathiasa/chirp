@@ -7,7 +7,10 @@ const { defineConfig, devices } = require('@playwright/test');
 const PORT = process.env.CHIRP_E2E_PORT || '7788';
 
 module.exports = defineConfig({
-  testDir: './tests',
+  // The screenshot capture lives beside the suite but is not part of it; it
+  // runs through `make screenshots`, which points testDir at this file.
+  testDir: process.env.CHIRP_SHOTS ? '.' : './tests',
+  testMatch: process.env.CHIRP_SHOTS ? 'screenshots.spec.js' : undefined,
   fullyParallel: false,
   workers: 1,
   forbidOnly: !!process.env.CI,

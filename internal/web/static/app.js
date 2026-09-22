@@ -44,6 +44,7 @@ const ICONS = {
   clip: '<path d="M20 11l-8.5 8.5a4.5 4.5 0 0 1-6.4-6.4L13 4.8a3 3 0 0 1 4.2 4.2l-8 8a1.5 1.5 0 0 1-2.1-2.1l7.6-7.6"/>',
   file: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/>',
   download: '<path d="M12 4v11M7 11l5 5 5-5"/><path d="M5 20h14"/>',
+  pulse: '<path d="M2 12h4l3-8 6 16 3-8h4"/>',
 };
 function icon(name, size = 20, cls = '') {
   const s = h('span', { class: cls, style: `display:inline-flex;width:${size}px;height:${size}px;flex:none` });
@@ -687,7 +688,9 @@ function renderRail() {
   $rail.replaceChildren(
     h('span', { class: 'logo' }, logoSvg()),
     btn('people', 'Chats', S.view === 'chat', () => setView('chat'), unreadCount() || null),
-    btn('wifi', 'Network', S.view === 'network', () => setView('network'), q || null),
+    btn('users', 'Rooms', S.view === 'rooms', () => setView('rooms'), roomUnread() || null),
+    btn('wifi', 'Nearby', S.view === 'nearby', () => setView('nearby')),
+    btn('pulse', 'Network', S.view === 'network', () => setView('network'), q || null),
     btn('gear', 'Settings', S.view === 'settings', () => setView('settings')),
     h('span', { class: 'grow' }),
     S.me ? h('button', { class: 'rbtn', 'aria-label': 'My identity', title: 'My identity', onclick: showIdentity }, avatar({ name: S.me.name, identicon: S.me.identicon }, 36, false)) : null);
@@ -709,7 +712,7 @@ function renderNav() {
       item('people', 'Chats', S.view === 'chat', () => setView('chat'), un || null),
       item('users', 'Rooms', S.view === 'rooms', () => setView('rooms'), roomUnread() || null),
       item('wifi', 'Nearby', S.view === 'nearby', () => setView('nearby')),
-      item('wifi', 'Network', S.view === 'network', () => setView('network'), q || null),
+      item('pulse', 'Network', S.view === 'network', () => setView('network'), q || null),
       item('gear', 'Settings', S.view === 'settings', () => setView('settings'))),
     h('div', { class: 'nsec' }, 'Identity'),
     h('div', { class: 'nlist' },
@@ -790,7 +793,7 @@ function renderSide(force) {
         h('button', { class: 'iconbtn sm', 'aria-label': 'Search everything', onclick: openPalette }, icon('search', 18)),
         h('button', { class: 'iconbtn sm', 'aria-label': 'Rooms', onclick: () => setView('rooms') }, icon('users', 18)),
         h('button', { class: 'iconbtn sm', 'aria-label': 'Nearby', onclick: () => setView('nearby') }, icon('wifi', 18)),
-        h('button', { class: 'iconbtn sm', 'aria-label': 'Network', onclick: () => setView('network') }, icon('refresh', 18)),
+        h('button', { class: 'iconbtn sm', 'aria-label': 'Network', onclick: () => setView('network') }, icon('pulse', 18)),
         h('button', { class: 'iconbtn sm', 'aria-label': 'Settings', onclick: () => setView('settings') }, icon('gear', 18)),
         h('button', { class: 'iconbtn sm', 'aria-label': 'My identity', onclick: showIdentity }, icon('key', 18))));
     $sideSearch = h('div', { class: 'searchwrap' }, icon('search', 18), $search);
@@ -1272,31 +1275,42 @@ function viewNearby() {
       addByAddress())));
 }
 
+// The radar redraws whenever a peer comes or goes, which is often. The input
+// and its error are built once and reused, so a background update cannot wipe
+// an address someone is halfway through typing.
+let $addr, $addrErr;
+
+async function connectByAddress() {
+  const v = $addr.value.trim();
+  if (!v) return;
+  $addrErr.textContent = '';
+  try {
+    let host, port;
+    if (v.startsWith('chirp://')) {
+      // Parsed on the daemon, which validates it strictly.
+      const p = await (await api('POST', '/api/invite/parse', { uri: v })).json();
+      host = p.host; port = p.port;
+    } else {
+      const i = v.lastIndexOf(':');
+      if (i < 1) throw new Error('Enter host:port, or a chirp:// invite');
+      host = v.slice(0, i); port = v.slice(i + 1);
+    }
+    await api('POST', '/api/dial', { host, port });
+    $addr.value = '';
+    toast('Connecting\u2026');
+    await loadPeers();
+  } catch (e) { $addrErr.textContent = e.message; }
+}
+
 function addByAddress() {
-  const input = h('input', { class: 'in', placeholder: '192.168.1.40:47120 or chirp://add/…', 'aria-label': 'Address or invite link' });
-  const err = h('div', { class: 'err' });
-  const connect = async () => {
-    const v = input.value.trim();
-    if (!v) return;
-    err.textContent = '';
-    try {
-      let host, port;
-      if (v.startsWith('chirp://')) {
-        // Parsed on the daemon, which validates it strictly.
-        const p = await (await api('POST', '/api/invite/parse', { uri: v })).json();
-        host = p.host; port = p.port;
-      } else {
-        const i = v.lastIndexOf(':');
-        if (i < 1) throw new Error('Enter host:port, or a chirp:// invite');
-        host = v.slice(0, i); port = v.slice(i + 1);
-      }
-      await api('POST', '/api/dial', { host, port });
-      input.value = '';
-      toast('Connecting\u2026');
-      await loadPeers();
-    } catch (e) { err.textContent = e.message; }
-  };
-  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') connect(); });
+  if (!$addr) {
+    $addr = h('input', { class: 'in', placeholder: '192.168.1.40:47120 or chirp://add/…', 'aria-label': 'Address or invite link' });
+    $addrErr = h('div', { class: 'err' });
+    $addr.addEventListener('keydown', (e) => { if (e.key === 'Enter') connectByAddress(); });
+  }
+  const input = $addr;
+  const err = $addrErr;
+  const connect = connectByAddress;
   return h('div', {},
     h('p', { class: 'muted', style: 'font-size:13px' }, 'Paste what the other device shows under Your invite. Chirp still checks their key on connect, so a wrong address fails rather than trusting the wrong person.'),
     input, err,

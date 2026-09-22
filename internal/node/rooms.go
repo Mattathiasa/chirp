@@ -105,7 +105,7 @@ func (n *Node) Rooms() ([]RoomView, error) {
 		for _, m := range r.Members {
 			rv.Members = append(rv.Members, RoomMemberView{
 				Name:   m,
-				Online: n.live[strings.ToLower(m)] != nil,
+				Online: n.memberOnline(m),
 			})
 		}
 		// Get last message.
@@ -116,6 +116,17 @@ func (n *Node) Rooms() ([]RoomView, error) {
 		out = append(out, rv)
 	}
 	return out, nil
+}
+
+// memberOnline reports whether a room member is reachable. We are always
+// reachable to ourselves: n.live only holds sessions to other people, so
+// without this the member list showed the reader as offline in their own room.
+// Callers hold n.mu.
+func (n *Node) memberOnline(name string) bool {
+	if strings.EqualFold(name, n.id.Name) {
+		return true
+	}
+	return n.live[strings.ToLower(name)] != nil
 }
 
 // GetRoom returns a single room by ID.
@@ -139,7 +150,7 @@ func (n *Node) GetRoom(id string) (*RoomView, error) {
 	for _, m := range r.Members {
 		rv.Members = append(rv.Members, RoomMemberView{
 			Name:   m,
-			Online: n.live[strings.ToLower(m)] != nil,
+			Online: n.memberOnline(m),
 		})
 	}
 	msgs, err := n.cfg.Store.RoomMessages(r.ID, 1)

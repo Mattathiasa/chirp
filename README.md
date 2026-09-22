@@ -31,8 +31,18 @@ Everyone running Chirp on the network shows up under **Your people** within a fe
 | --- | --- |
 | ![Queued message](docs/img/queued.png) | ![Key changed](docs/img/changed.png) |
 | Offline peer: the message waits in the outbox and retries. | A different key claimed a pinned name. Sending is blocked until you review it. |
-| ![Network and outbox](docs/img/network.png) | ![Backup](docs/img/backup.png) |
-| Live sessions, outbox and a discovery log. | Encrypted key backup with a strength meter. |
+| ![A room](docs/img/rooms.png) | ![A file transfer](docs/img/files.png) |
+| Rooms fan out one encrypted copy per member, and say who is unverified. | Transfers are chunked, resumable and checked against the sender's hash. |
+| ![Nearby and the invite QR](docs/img/nearby.png) | ![Network and outbox](docs/img/network.png) |
+| When discovery is blocked, share an address or scan the invite. | Live sessions, outbox and a discovery log. |
+| ![The landing page](docs/img/landing.png) | ![Key generation](docs/img/setup.png) |
+| What a first run sees. | The setup log prints the key that was actually made, not a scripted animation. |
+| ![Settings](docs/img/settings.png) | |
+| Retention, privacy toggles, backup and wipe. | |
+
+Every screenshot here is captured from the running UI by `make screenshots`,
+which drives `cmd/demo` and asserts it is looking at the right screen before it
+takes the picture.
 
 ## What is interesting about it
 
@@ -84,6 +94,7 @@ make vet fmt
 make vuln         # govulncheck
 make e2e-install  # one-off: Playwright and its browser
 make e2e          # drives the real UI against cmd/demo, desktop and phone
+make screenshots  # recapture docs/img from the real UI
 ```
 
 `make e2e` runs the browser suite in `e2e/`: onboarding, sending, replying,

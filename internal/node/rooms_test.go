@@ -941,3 +941,46 @@ func TestRoomAcceptIsAnnounced(t *testing.T) {
 		t.Fatalf("membership disturbed by a join announcement: %+v", r)
 	}
 }
+
+// n.live only holds sessions to other people, so a naive lookup reported the
+// reader as offline in their own room's member list.
+func TestRoomMemberListShowsUsAsOnline(t *testing.T) {
+	hub := discovery.NewHub()
+	alice := newRig(t, hub, "Alice")
+	bob := newRig(t, hub, "Bob")
+	waitFor(t, "sessions", func() bool { return online(alice.n, "Bob") && online(bob.n, "Alice") })
+
+	room, err := alice.n.CreateRoom("Presence", []string{"Bob"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	joinRoom(t, bob.n, 1)
+
+	for _, side := range []struct {
+		who  string
+		n    *Node
+		self string
+	}{{"alice", alice.n, "Alice"}, {"bob", bob.n, "Bob"}} {
+		rv, err := side.n.GetRoom(room.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, m := range rv.Members {
+			if m.Name == side.self && !m.Online {
+				t.Errorf("%s sees themselves as offline in their own room", side.who)
+			}
+		}
+	}
+
+	// And the count in the header follows from the same list.
+	rooms, _ := alice.n.Rooms()
+	onlineCount := 0
+	for _, m := range rooms[0].Members {
+		if m.Online {
+			onlineCount++
+		}
+	}
+	if onlineCount != 2 {
+		t.Fatalf("2 members are connected but the room reports %d online", onlineCount)
+	}
+}
