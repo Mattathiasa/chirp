@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"unicode/utf8"
 
 	"github.com/flynn/noise"
 	"golang.org/x/crypto/chacha20poly1305"
@@ -16,7 +17,7 @@ const (
 	scryptN       = 1 << 15
 	scryptR       = 8
 	scryptP       = 1
-	// MinPassphraseLen is enforced on export.
+	// MinPassphraseLen is enforced on export, counted in characters.
 	MinPassphraseLen = 12
 )
 
@@ -25,19 +26,25 @@ const (
 var ErrBadPassphrase = errors.New("wrong passphrase or corrupted backup")
 
 // PassphraseStrength returns a score from 0 (terrible) to 5 (excellent)
-// based on length, character diversity, and common-pattern detection.
+// based on length and character diversity.
+//
+// Length is counted in characters, not bytes. Counting bytes scored
+// "日本語のパスワード" - nine characters - as though it were twenty, because
+// it occupies twenty-seven bytes, and disagreed with the meter in the browser
+// for every passphrase that is not pure ASCII.
 func PassphraseStrength(pw string) int {
-	if len(pw) == 0 {
+	n := utf8.RuneCountInString(pw)
+	if n == 0 {
 		return 0
 	}
 	score := 0
 	// length
 	switch {
-	case len(pw) >= 20:
+	case n >= 20:
 		score += 3
-	case len(pw) >= 16:
+	case n >= 16:
 		score += 2
-	case len(pw) >= 12:
+	case n >= 12:
 		score += 1
 	}
 	// character classes
@@ -95,7 +102,7 @@ type backupPlain struct {
 // ChaCha20-Poly1305. The KDF parameters are stored in the file so they can be
 // raised later without breaking old backups.
 func ExportBackup(id *Identity, passphrase string) ([]byte, error) {
-	if len(passphrase) < MinPassphraseLen {
+	if utf8.RuneCountInString(passphrase) < MinPassphraseLen {
 		return nil, fmt.Errorf("passphrase must be at least %d characters", MinPassphraseLen)
 	}
 	salt := make([]byte, 16)

@@ -1374,39 +1374,299 @@ function showBackup() {
 }
 
 // ---------- first run ----------
-function viewWelcome() {
-  const name = h('input', { id: 'nm', maxlength: 32, autocomplete: 'nickname', placeholder: 'e.g. Alex Rivera' });
-  const err = h('div', { class: 'err' });
-  const go = h('button', { class: 'btn primary block', disabled: true }, 'Create my key and start');
-  name.addEventListener('input', () => { go.disabled = !name.value.trim(); err.textContent = ''; });
-  const start = async () => {
-    try { await api('POST', '/api/setup', { name: name.value }); await boot(); } catch (e) { err.textContent = e.message; }
-  };
-  go.addEventListener('click', start);
-  name.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !go.disabled) start(); });
-  const file = h('input', { type: 'file', accept: 'application/json,.json', 'aria-label': 'Backup file', style: 'height:auto;padding:10px' });
-  const pass = h('input', { type: 'password', placeholder: 'Backup passphrase', 'aria-label': 'Backup passphrase' });
-  const rerr = h('div', { class: 'err' });
-  const restore = h('button', { class: 'btn block', onclick: async () => {
-    try { const f = file.files[0]; if (!f) throw new Error('Choose a backup file'); await api('POST', '/api/restore', { backup: await f.text(), passphrase: pass.value }); await boot(); } catch (e) { rerr.textContent = e.message; }
-  } }, 'Restore from backup');
+// ---------- before there is an identity ----------
+// Three screens live here: the landing page, a four-step setup, and restore
+// from a backup. Nothing else in the app is reachable until one of them ends
+// with a key on this device.
+const GATE = { screen: 'landing', step: 0, name: '', pass: '', log: [], backedUp: false, busy: false, err: '' };
+
+function gate(screen) { GATE.screen = screen; GATE.err = ''; renderGate(); }
+
+function renderGate() {
+  if (GATE.screen === 'onboard') return renderOnboard();
+  if (GATE.screen === 'restore') return renderRestore();
+  return renderLanding();
+}
+
+// Mirrors identity.PassphraseStrength in Go so the meter agrees with what the
+// daemon will actually accept. TestPassphraseStrengthMatchesTheBrowserMeter
+// pins the two together.
+function passphraseStrength(pw) {
+  // Characters, not UTF-16 code units: "\u65e5\u672c\u8a9e" is three characters and one
+  // emoji is one, which is what a person means by "twelve characters" and
+  // what the daemon counts.
+  const n = [...pw].length;
+  if (!n) return 0;
+  let score = 0;
+  if (n >= 20) score += 3;
+  else if (n >= 16) score += 2;
+  else if (n >= 12) score += 1;
+  let lower = false, upper = false, digit = false, special = false;
+  for (const ch of pw) {
+    if (ch >= 'a' && ch <= 'z') lower = true;
+    else if (ch >= 'A' && ch <= 'Z') upper = true;
+    else if (ch >= '0' && ch <= '9') digit = true;
+    else special = true;
+  }
+  score += [lower, upper, digit, special].filter(Boolean).length - 1;
+  return Math.min(score, 5);
+}
+const STRENGTH_WORDS = ['Too short', 'Weak', 'Fair', 'Good', 'Strong', 'Excellent'];
+const MIN_PASSPHRASE = 12;
+
+function strengthMeter(pw) {
+  const score = passphraseStrength(pw);
+  const colors = ['var(--red)', 'var(--tang)', 'var(--butter)', 'var(--mint)', 'var(--mint)'];
+  return h('div', {},
+    h('div', { class: 'bars', role: 'img', 'aria-label': `Passphrase strength: ${STRENGTH_WORDS[score]}` },
+      [0, 1, 2, 3, 4].map((i) => h('i', { style: i < score ? `background:${colors[Math.min(score, 5) - 1]}` : '' }))),
+    h('div', { class: 'hint mono' }, pw ? STRENGTH_WORDS[score] : 'Chirp cannot recover a forgotten passphrase.'));
+}
+
+function landingHero() {
+  return h('section', { class: 'hero' },
+    h('div', {},
+      h('div', { class: 'eyebrow' }, 'Messaging for the people on your Wi-Fi'),
+      h('h1', {}, 'Talk to the ', h('mark', {}, 'room'), ' you\u2019re standing in.'),
+      h('p', { class: 'lead' }, 'Chirp finds the people on your network and talks to them directly. No server in the middle, no account to make, nothing to sign in to.'),
+      h('div', { class: 'cta-row' },
+        h('button', { class: 'btn primary', onclick: () => { GATE.step = 0; gate('onboard'); } }, 'Get started'),
+        h('button', { class: 'btn', onclick: () => gate('restore') }, 'I have a key backup'))),
+    h('div', { class: 'hero-art', 'aria-hidden': 'true' }, h('span', {}, logoSvg())));
+}
+
+const LANDING_STEPS = [
+  ['key', 'A key is made here', 'It is created on this device and never leaves it. That key is your identity; there is no account and nothing to sign in to.'],
+  ['wifi', 'Your network is the network', 'Chirp announces itself over mDNS and finds everyone else doing the same. Nothing is sent to the internet.'],
+  ['lock', 'Then you talk directly', 'Each pair opens its own Noise session and messages go device to device, encrypted end to end.'],
+];
+
+const LANDING_FAQ = [
+  ['Does anything reach the internet?', 'No. Discovery is multicast on the local network and messages go straight between devices. There is no server to reach, which is also why it only works between people on the same network.'],
+  ['What happens if I lose this device?', 'Your key goes with it. There is no account to recover from, so export a backup: it is a single encrypted file protected by a passphrase you choose.'],
+  ['How do I know who I am talking to?', 'Chirp pins the first key it sees for a name and warns loudly if it ever changes. To be certain, compare fingerprints or the six words in person; the app shows both.'],
+  ['Is it audited?', 'No. It uses well-known primitives in a standard pattern, but the composition has had no outside review. The README says so too.'],
+];
+
+function renderLanding() {
+  $app.replaceChildren(h('div', { class: 'landing' },
+    h('header', { class: 'lnav' },
+      h('span', { class: 'brandmark' }, h('span', { class: 'logo' }, logoSvg()), 'chirp'),
+      h('span', { class: 'grow' }),
+      h('button', { class: 'btn', onclick: () => gate('restore') }, 'Restore a backup')),
+    landingHero(),
+    h('section', { class: 'lsec' },
+      h('div', { class: 'eyebrow' }, 'What happens when you open it'),
+      h('h2', {}, 'Three things happen. None of them touch the internet.'),
+      h('div', { class: 'lsteps' }, LANDING_STEPS.map(([ic, title, body], i) =>
+        h('div', { class: 'lstep' },
+          h('span', { class: 'num' }, String(i + 1).padStart(2, '0')),
+          h('span', { class: 'ic' }, icon(ic, 20)),
+          h('h3', {}, title), h('p', {}, body))))),
+    h('section', { class: 'lsec dark' },
+      h('div', { class: 'eyebrow butter' }, 'Trust'),
+      h('h2', {}, 'Encryption is not the same as knowing who.'),
+      h('p', { class: 'lead' }, 'A secure channel proves a key is consistent. It cannot tell you whose key it is. So Chirp pins the first key it sees under a name, and says so, loudly, if it ever changes.'),
+      h('div', { class: 'facts' },
+        h('div', {}, h('b', {}, '0'), h('span', {}, 'servers between you and them')),
+        h('div', {}, h('b', {}, '3'), h('span', {}, 'handshake messages to an encrypted session')),
+        h('div', {}, h('b', {}, '0'), h('span', {}, 'accounts, ever')))),
+    h('section', { class: 'lsec' },
+      h('div', { class: 'eyebrow' }, 'Questions'),
+      h('h2', {}, 'Things people ask first.'),
+      h('div', { class: 'faq' }, LANDING_FAQ.map(([q, a]) =>
+        h('details', {}, h('summary', {}, q), h('p', {}, a))))),
+    h('section', { class: 'lcta' },
+      h('h2', {}, 'Say hello to the desk next to you.'),
+      h('button', { class: 'btn primary', onclick: () => { GATE.step = 0; gate('onboard'); } }, 'Get started'),
+      h('code', {}, '$ make demo   # scripted peers, no network needed'))));
+}
+
+// ---------- restore ----------
+function renderRestore() {
+  const file = h('input', { type: 'file', accept: 'application/json,.json', 'aria-label': 'Backup file' });
+  const pass = h('input', { type: 'password', placeholder: 'Backup passphrase', 'aria-label': 'Backup passphrase', autocomplete: 'current-password' });
+  const err = h('div', { class: 'err' }, GATE.err);
+  const go = h('button', { class: 'btn primary block' }, 'Restore my key');
+  const sync = () => { go.disabled = !(file.files && file.files[0] && pass.value); };
+  file.addEventListener('change', sync);
+  pass.addEventListener('input', sync);
+  sync();
+  go.addEventListener('click', async () => {
+    go.disabled = true;
+    err.textContent = '';
+    try {
+      await api('POST', '/api/restore', { backup: await file.files[0].text(), passphrase: pass.value });
+      await boot();
+    } catch (e) { err.textContent = e.message; go.disabled = false; }
+  });
+  pass.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !go.disabled) go.click(); });
+
   $app.replaceChildren(h('div', { class: 'welcome' }, h('div', { class: 'card' },
-    h('div', { style: 'display:flex;align-items:center;gap:10px;font-weight:600;font-size:20px' }, h('span', { class: 'logo' }, logoSvg()), 'Chirp'),
-    h('h1', {}, 'Talk to people on your Wi-Fi. No server.'),
-    h('div', { class: 'steps' },
-      h('div', {}, h('span', { class: 'ic' }, icon('key', 14)), h('span', {}, 'A key is created on this device. It is your identity and it never leaves.')),
-      h('div', {}, h('span', { class: 'ic' }, icon('wifi', 14)), h('span', {}, 'Nearby Chirp users appear automatically over mDNS.')),
-      h('div', {}, h('span', { class: 'ic' }, icon('lock', 14)), h('span', {}, 'Messages go device to device, encrypted with Noise.'))),
-    h('div', { class: 'field' }, h('label', { for: 'nm' }, 'Your name'), name, h('span', { class: 'hint' }, 'Nearby people see this name.'), err), go,
-    h('details', {}, h('summary', { style: 'cursor:pointer;font-weight:500' }, 'I have a backup'),
-      h('div', { style: 'display:flex;flex-direction:column;gap:10px;margin-top:12px' }, file, pass, rerr, restore)))));
+    h('div', { class: 'brandmark' }, h('span', { class: 'logo' }, logoSvg()), 'chirp'),
+    h('h1', {}, 'Welcome back. Bring your key.'),
+    h('p', { class: 'hint' }, 'Restoring on a new device keeps your fingerprint, so anyone who verified you stays verified.'),
+    h('div', { class: 'field' }, h('label', {}, 'Backup file'), file),
+    h('div', { class: 'field' }, h('label', {}, 'Passphrase'), pass, err),
+    go,
+    h('button', { class: 'btn block', onclick: () => gate('landing') }, 'Back'))));
+  file.focus();
+}
+
+// ---------- onboarding ----------
+const ONBOARD_STEPS = ['Your name', 'Your key', 'Backup', 'Ready'];
+
+function stepper() {
+  return h('ol', { class: 'stepper', 'aria-label': 'Setup progress' },
+    ONBOARD_STEPS.map((label, i) => h('li', {
+      class: i < GATE.step ? 'done' : i === GATE.step ? 'on' : '',
+      'aria-current': i === GATE.step ? 'step' : 'false',
+    }, h('b', {}, i < GATE.step ? icon('check', 13) : String(i + 1)), label)));
+}
+
+function onboardShell(...kids) {
+  $app.replaceChildren(h('div', { class: 'welcome' }, h('div', { class: 'card' },
+    h('div', { class: 'brandmark' }, h('span', { class: 'logo' }, logoSvg()), 'chirp'),
+    stepper(), ...kids)));
+}
+
+function renderOnboard() {
+  if (GATE.step === 0) return stepName();
+  if (GATE.step === 1) return stepKey();
+  if (GATE.step === 2) return stepBackup();
+  return stepReady();
+}
+
+function stepName() {
+  const name = h('input', { id: 'nm', maxlength: 32, autocomplete: 'nickname', placeholder: 'e.g. Alex Rivera', value: GATE.name });
+  const err = h('div', { class: 'err' }, GATE.err);
+  const go = h('button', { class: 'btn primary block', disabled: !GATE.name.trim() }, 'Make my key');
+  name.addEventListener('input', () => { GATE.name = name.value; go.disabled = !name.value.trim(); err.textContent = ''; });
+  const next = () => { if (!go.disabled) { GATE.step = 1; renderGate(); } };
+  go.addEventListener('click', next);
+  name.addEventListener('keydown', (e) => { if (e.key === 'Enter') next(); });
+
+  onboardShell(
+    h('h1', {}, 'Pick a name people will recognise.'),
+    h('p', { class: 'hint' }, 'This is the label nearby people see. Your real identity is the key made in the next step, not this.'),
+    h('div', { class: 'field' }, h('label', { for: 'nm' }, 'Your name'), name, err),
+    go,
+    h('button', { class: 'btn block', onclick: () => gate('landing') }, 'Back'));
   name.focus();
 }
 
-// ---------- boot ----------
+// The terminal below prints what actually happened, as it happens. There is no
+// scripted timeline: a line appears when its step really completed, and the
+// fingerprint and words shown at the end are the ones the daemon returned.
+function stepKey() {
+  const term = h('div', { class: 'term', role: 'log', 'aria-label': 'Key generation progress' });
+  const line = (text, cls) => { term.append(h('div', { class: cls || '' }, text)); term.scrollTop = term.scrollHeight; };
+  const cont = h('button', { class: 'btn primary block', disabled: true }, 'Continue');
+  const err = h('div', { class: 'err' });
+
+  onboardShell(
+    h('h1', {}, 'Making your key.'),
+    h('p', { class: 'hint' }, 'A Curve25519 keypair, generated on this device. The private half never leaves it and is never sent anywhere.'),
+    term, err, cont);
+
+  (async () => {
+    line(`$ chirp setup --name ${JSON.stringify(GATE.name)}`);
+    line('generating Curve25519 keypair…', 'muted');
+    const started = performance.now();
+    try {
+      const st = await (await api('POST', '/api/setup', { name: GATE.name })).json();
+      const ms = Math.round(performance.now() - started);
+      S.me = st.me;
+      line(`keypair generated and written to disk (${ms} ms)`, 'ok');
+      line(`fingerprint  ${st.me.fp.slice(0, 32)}`, 'ok');
+      line(`             ${st.me.fp.slice(32)}`, 'ok');
+      line(`words        ${st.me.words.join(' ')}`, 'ok');
+      line(`listening on port ${st.me.port}`, 'ok');
+      cont.disabled = false;
+      cont.focus();
+    } catch (e) {
+      line('failed', 'bad');
+      err.textContent = e.message;
+      const back = h('button', { class: 'btn block', onclick: () => { GATE.step = 0; renderGate(); } }, 'Back');
+      err.after(back);
+    }
+  })();
+
+  cont.addEventListener('click', () => { GATE.step = 2; renderGate(); });
+}
+
+function stepBackup() {
+  const pass = h('input', { type: 'password', placeholder: `At least ${MIN_PASSPHRASE} characters`, 'aria-label': 'Backup passphrase', autocomplete: 'new-password', value: GATE.pass });
+  const meterBox = h('div', {});
+  const err = h('div', { class: 'err' });
+  const done = h('div', { class: 'chip ok', style: GATE.backedUp ? '' : 'display:none' }, icon('check', 13), 'Backup saved');
+  const save = h('button', { class: 'btn primary block', disabled: [...GATE.pass].length < MIN_PASSPHRASE }, icon('download', 18), 'Export encrypted backup');
+  const skip = h('button', { class: 'btn block' }, GATE.backedUp ? 'Continue' : 'Skip for now');
+
+  const redraw = () => { meterBox.replaceChildren(strengthMeter(pass.value)); };
+  pass.addEventListener('input', () => {
+    GATE.pass = pass.value;
+    save.disabled = [...pass.value].length < MIN_PASSPHRASE;
+    err.textContent = '';
+    redraw();
+  });
+  redraw();
+
+  save.addEventListener('click', async () => {
+    save.disabled = true;
+    err.textContent = '';
+    try {
+      // The daemon returns the encrypted file; hand it straight to the browser.
+      const r = await api('POST', '/api/backup', { passphrase: pass.value });
+      const url = URL.createObjectURL(await r.blob());
+      const a = h('a', { href: url, download: 'chirp-key-backup.json' });
+      document.body.append(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 10_000);
+      GATE.backedUp = true;
+      done.style.display = '';
+      skip.textContent = 'Continue';
+      toast('Backup exported');
+    } catch (e) { err.textContent = e.message; }
+    save.disabled = [...pass.value].length < MIN_PASSPHRASE;
+  });
+  skip.addEventListener('click', () => { GATE.step = 3; renderGate(); });
+
+  onboardShell(
+    h('h1', {}, 'Back it up, or lose yourself.'),
+    h('p', { class: 'hint' }, 'There is no account to recover from. Lose this device without a backup and everyone who knows you sees a new key and has to verify you again.'),
+    h('div', { class: 'field' }, h('label', {}, 'Backup passphrase'), pass, meterBox, err),
+    done, save, skip);
+  pass.focus();
+}
+
+function stepReady() {
+  const canNotify = 'Notification' in window;
+  const state = canNotify ? Notification.permission : 'unsupported';
+  const ask = h('button', { class: 'btn block', disabled: state !== 'default' },
+    state === 'granted' ? 'Notifications allowed'
+      : state === 'denied' ? 'Notifications blocked in the browser'
+      : state === 'unsupported' ? 'This browser has no notifications'
+      : 'Allow notifications');
+  ask.addEventListener('click', async () => {
+    await Notification.requestPermission();
+    GATE.step = 3; renderGate();
+  });
+
+  onboardShell(
+    h('h1', {}, 'You\u2019re set.'),
+    h('p', { class: 'hint' }, 'Anyone else running Chirp on this network shows up within a few seconds. Nothing has been sent anywhere.'),
+    h('div', { class: 'steps' },
+      h('div', {}, h('span', { class: 'ic' }, icon('key', 14)), h('span', {}, 'Your key is on this device only.')),
+      h('div', {}, h('span', { class: 'ic' }, icon('shield', 14)), h('span', {}, GATE.backedUp ? 'You exported a backup. Keep it somewhere safe.' : 'You skipped the backup. You can make one any time from Settings.')),
+      h('div', {}, h('span', { class: 'ic' }, icon('wifi', 14)), h('span', {}, 'Discovery needs the local network. Your firewall may ask; allow it.'))),
+    h('p', { class: 'hint' }, 'Notifications are optional and only fire while this tab is in the background.'),
+    ask,
+    h('button', { class: 'btn primary block', onclick: () => boot() }, 'Open Chirp'));
+}
+
 async function boot() {
   const st = await getJSON('/api/state');
-  if (st.setup) { viewWelcome(); return; }
+  if (st.setup) { renderGate(); return; }
   S.me = st.me;
   await Promise.all([loadSettings(), loadPeers()]);
   mountShell();

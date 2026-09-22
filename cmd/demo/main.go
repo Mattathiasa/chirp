@@ -43,6 +43,7 @@ var replies = []string{
 func main() {
 	httpAt := flag.String("http", "127.0.0.1:7777", "web UI address (loopback only)")
 	name := flag.String("name", "You", "your display name in the demo")
+	onboard := flag.Bool("onboard", false, "start with no identity, so the landing page and setup flow are shown")
 	flag.Parse()
 	if host, _, err := net.SplitHostPort(*httpAt); err != nil || !net.ParseIP(host).IsLoopback() {
 		log.Fatal("--http must be a loopback ip:port")
@@ -65,8 +66,13 @@ func main() {
 		log.Fatal(err)
 	}
 	defer a.Close()
-	if err := a.Setup(*name); err != nil {
-		log.Fatal(err)
+	// Normally the demo sets itself up so you land straight in a conversation.
+	// With -onboard it does not, which is the only way to see (or test) the
+	// landing page and the setup flow.
+	if !*onboard {
+		if err := a.Setup(*name); err != nil {
+			log.Fatal(err)
+		}
 	}
 
 	go bot(ctx, hub, filepath.Join(tmp, "alex"), "Alex Rivera", 0, true)

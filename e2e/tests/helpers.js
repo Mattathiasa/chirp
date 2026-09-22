@@ -2,14 +2,28 @@
 // to get through onboarding first.
 const { expect } = require('@playwright/test');
 
-/** Complete onboarding if the welcome screen is showing. */
+/**
+ * Get to the app, completing setup if this daemon has no identity yet. The
+ * unauthenticated side is three screens: landing, a four-step setup, restore.
+ */
 async function ensureSetUp(page, name = 'Tester') {
   await page.goto('/');
-  const nameField = page.locator('#nm');
-  if (await nameField.isVisible().catch(() => false)) {
-    await nameField.fill(name);
-    await page.getByRole('button', { name: /create my key/i }).click();
+
+  if (await page.locator('.landing').isVisible().catch(() => false)) {
+    await page.getByRole('button', { name: 'Get started' }).first().click();
+    await page.locator('#nm').fill(name);
+    await page.getByRole('button', { name: 'Make my key' }).click();
+
+    // The key is generated for real; the button unlocks when it has been.
+    const cont = page.getByRole('button', { name: 'Continue', exact: true });
+    await cont.waitFor({ state: 'visible' });
+    await expect(cont).toBeEnabled({ timeout: 15_000 });
+    await cont.click();
+
+    await page.getByRole('button', { name: /skip for now|continue/i }).click();
+    await page.getByRole('button', { name: 'Open Chirp' }).click();
   }
+
   await expect(page.locator('.stage')).toBeVisible();
 }
 
