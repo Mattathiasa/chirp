@@ -382,6 +382,8 @@ function viewRoomThread(keepScroll) {
   return el;
 }
 
+const REACTIONS = ['\u{1F44D}', '\u{1F389}', '\u{2764}\u{FE0F}', '\u{1F602}', '\u{1F440}', '\u{1F622}'];
+
 function roomMsgEl(m) {
   const mine = m.dir === 'out';
   const st = mine
@@ -389,7 +391,52 @@ function roomMsgEl(m) {
       icon(m.status === 'delivered' ? 'checks' : 'clock', m.status === 'delivered' ? 16 : 13),
       m.status === 'delivered' ? `${fmtTime(m.ts)} · Delivered to everyone` : 'Sending to members…')
     : h('div', { class: 'stat' }, `${m.sender} · ${fmtTime(m.ts)}`);
-  return h('div', { class: 'm ' + (mine ? 'me' : 'them') }, h('div', { class: 'bubble' }, m.body), st);
+
+  // Group the reaction list into one chip per emoji, carrying who reacted.
+  const byEmoji = new Map();
+  for (const r of m.reactions || []) {
+    if (!byEmoji.has(r.emoji)) byEmoji.set(r.emoji, []);
+    byEmoji.get(r.emoji).push(r.sender);
+  }
+  const chips = [...byEmoji.entries()].map(([emoji, senders]) => {
+    const meToo = senders.some((x) => x.toLowerCase() === S.me.name.toLowerCase());
+    return h('button', {
+      class: 'react' + (meToo ? ' on' : ''),
+      title: senders.join(', '),
+      'aria-label': `${emoji} from ${senders.join(', ')}`,
+      'aria-pressed': String(meToo),
+      onclick: () => toggleRoomReaction(m.id, emoji),
+    }, emoji, h('span', {}, senders.length));
+  });
+
+  const add = h('button', { class: 'react add', 'aria-label': 'Add a reaction', title: 'Add a reaction', onclick: (ev) => {
+    ev.stopPropagation();
+    showReactionPicker(m.id);
+  } }, icon('plus', 14));
+
+  return h('div', { class: 'm ' + (mine ? 'me' : 'them') },
+    h('div', { class: 'bubble' }, m.body),
+    h('div', { class: 'reacts' }, ...chips, add),
+    st);
+}
+
+async function toggleRoomReaction(msgID, emoji) {
+  if (!S.roomCur) return;
+  try {
+    await api('POST', `/api/rooms/${enc(S.roomCur)}/messages/${enc(msgID)}/react`, { emoji });
+    S.msgs = await getJSON(`/api/rooms/${enc(S.roomCur)}/messages`);
+    renderMain(true);
+  } catch (e) { toast(e.message, true); }
+}
+
+function showReactionPicker(msgID) {
+  modal((box, close) => {
+    box.append(
+      h('div', { style: 'display:flex;justify-content:space-between;align-items:center' }, h('h1', {}, 'React'),
+        h('button', { class: 'iconbtn', 'aria-label': 'Close', onclick: close }, icon('x', 20))),
+      h('div', { class: 'picker' }, ...REACTIONS.map((emoji) =>
+        h('button', { class: 'react', 'aria-label': `React with ${emoji}`, onclick: async () => { close(); await toggleRoomReaction(msgID, emoji); } }, emoji))));
+  });
 }
 
 function renameRoomPrompt(r) {

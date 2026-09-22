@@ -208,6 +208,13 @@ func (e Envelope) validate() error {
 		if !utf8.ValidString(e.Emoji) {
 			return errors.New("proto: emoji is not valid UTF-8")
 		}
+		// A reaction to a room message names the room; a one-to-one reaction
+		// leaves it empty.
+		if e.Room != "" {
+			if err := checkID(e.Room); err != nil {
+				return fmt.Errorf("proto: bad react room: %w", err)
+			}
+		}
 	case TypeDel:
 		if err := checkID(e.Target); err != nil {
 			return fmt.Errorf("proto: bad del target: %w", err)

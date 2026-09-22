@@ -110,6 +110,10 @@ func (l *link) readLoop(ctx context.Context) {
 				l.n.emit(Event{Type: "status", Peer: l.peer, Message: &m})
 			}
 		case proto.TypeReact:
+			if e.Room != "" {
+				l.n.handleRoomReaction(l, e)
+				break
+			}
 			l.n.emit(Event{Type: "reaction", Peer: l.peer, Emoji: e.Emoji, Target: e.Target})
 		case proto.TypeDel:
 			l.n.cfg.Store.DeleteMessage(e.Target)

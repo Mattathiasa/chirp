@@ -385,6 +385,67 @@ func (n *Node) RenameRoom(roomID, newName string) error {
 	return nil
 }
 
+// SendRoomReaction toggles our emoji on a room message and fans the change out
+// to every other member.
+func (n *Node) SendRoomReaction(roomID, msgID, emoji string) error {
+	if emoji == "" {
+		return errors.New("node: emoji required")
+	}
+	r, err := n.cfg.Store.GetRoom(roomID)
+	if err != nil {
+		return err
+	}
+	if !isMember(r.Members, n.id.Name) {
+		return errors.New("node: not a member of this room")
+	}
+
+	m, changed, err := n.cfg.Store.ToggleRoomReaction(roomID, msgID, n.id.Name, emoji)
+	if err != nil {
+		return err
+	}
+	if changed {
+		n.emit(Event{Type: "roomMessage", Room: roomID, RoomMessage: &m})
+	}
+
+	for _, mb := range r.Members {
+		if mb == n.id.Name {
+			continue
+		}
+		n.mu.Lock()
+		l := n.live[strings.ToLower(mb)]
+		n.mu.Unlock()
+		if l == nil || !speaksRooms(l) {
+			continue // best effort: a reaction is not worth an outbox entry
+		}
+		if err := l.send(proto.Envelope{T: proto.TypeReact, Room: roomID, Target: msgID, Emoji: emoji}); err != nil {
+			n.logf("room reaction to %s: %v", mb, err)
+		}
+	}
+	return nil
+}
+
+// handleRoomReaction applies a reaction that arrived for a room message. Like
+// every other room envelope it is only honoured from a current member.
+func (n *Node) handleRoomReaction(l *link, e proto.Envelope) {
+	r, err := n.cfg.Store.GetRoom(e.Room)
+	if err != nil {
+		n.logf("room reaction dropped: unknown room %s from %s", e.Room, l.peer)
+		return
+	}
+	if !isMember(r.Members, l.peer) || !isMember(r.Members, n.id.Name) {
+		n.logf("room reaction dropped: %q is not a member of %s", l.peer, e.Room)
+		return
+	}
+	m, changed, err := n.cfg.Store.ToggleRoomReaction(e.Room, e.Target, l.peer, e.Emoji)
+	if err != nil {
+		n.logf("room reaction store: %v", err)
+		return
+	}
+	if changed {
+		n.emit(Event{Type: "roomMessage", Room: e.Room, RoomMessage: &m})
+	}
+}
+
 // speaksRooms reports whether a peer advertised the rooms capability. Room
 // envelope types are unknown to a peer that predates them, and the decoder
 // rejects unknown types fatally, so sending one would drop the session rather

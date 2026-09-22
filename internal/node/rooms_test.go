@@ -667,3 +667,98 @@ func TestRoomSeqSurvivesRestart(t *testing.T) {
 		t.Fatalf("Alice's seq after Bob's is %d, want 4", got)
 	}
 }
+
+// A reaction sent into a room reaches every other member and is persisted, so
+// it survives a reload rather than living only in an SSE event.
+func TestRoomReactionReachesEveryMember(t *testing.T) {
+	hub := discovery.NewHub()
+	alice := newRig(t, hub, "Alice")
+	bob := newRig(t, hub, "Bob")
+	carol := newRig(t, hub, "Carol")
+
+	waitFor(t, "all online", func() bool {
+		return online(alice.n, "Bob") && online(alice.n, "Carol") &&
+			online(bob.n, "Carol") && online(carol.n, "Bob")
+	})
+
+	room, err := alice.n.CreateRoom("Reactions", []string{"Bob", "Carol"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "everyone sees the room", func() bool {
+		br, _ := bob.n.Rooms()
+		cr, _ := carol.n.Rooms()
+		return len(br) == 1 && len(cr) == 1
+	})
+	time.Sleep(500 * time.Millisecond)
+
+	msg, err := alice.n.SendRoomMessage(room.ID, "ship it")
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "everyone has the message", func() bool {
+		bm, _ := bob.n.RoomMessages(room.ID, 10)
+		cm, _ := carol.n.RoomMessages(room.ID, 10)
+		return len(bm) == 1 && len(cm) == 1
+	})
+
+	if err := bob.n.SendRoomReaction(room.ID, msg.ID, "🎉"); err != nil {
+		t.Fatal(err)
+	}
+
+	hasReaction := func(n *Node, who, emoji string) func() bool {
+		return func() bool {
+			msgs, _ := n.RoomMessages(room.ID, 10)
+			for _, m := range msgs {
+				for _, r := range m.Reactions {
+					if r.Sender == who && r.Emoji == emoji {
+						return true
+					}
+				}
+			}
+			return false
+		}
+	}
+	waitFor(t, "alice sees bob's reaction", hasReaction(alice.n, "Bob", "🎉"))
+	waitFor(t, "carol sees bob's reaction", hasReaction(carol.n, "Bob", "🎉"))
+	if !hasReaction(bob.n, "Bob", "🎉")() {
+		t.Fatal("bob does not see his own reaction")
+	}
+
+	// Sending the same emoji again toggles it back off everywhere.
+	if err := bob.n.SendRoomReaction(room.ID, msg.ID, "🎉"); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "alice sees it removed", func() bool { return !hasReaction(alice.n, "Bob", "🎉")() })
+	waitFor(t, "carol sees it removed", func() bool { return !hasReaction(carol.n, "Bob", "🎉")() })
+}
+
+// A reaction, like a message, is only honoured from a current member.
+func TestRoomReactionFromNonMemberIsRejected(t *testing.T) {
+	hub := discovery.NewHub()
+	alice := newRig(t, hub, "Alice")
+	newRig(t, hub, "Bob")
+	carol := newRig(t, hub, "Carol")
+	waitFor(t, "all online", func() bool { return online(alice.n, "Bob") && online(alice.n, "Carol") })
+
+	room, err := alice.n.CreateRoom("No Carol", []string{"Bob"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	msg, err := alice.n.SendRoomMessage(room.ID, "members only")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sc := rawSession(t, alice.n.ln.Addr().String(), carol.id)
+	sc.Send(proto.Envelope{T: proto.TypeReact, Room: room.ID, Target: msg.ID, Emoji: "👀"}) //nolint:errcheck
+	time.Sleep(300 * time.Millisecond)
+	sc.Close()
+
+	msgs, _ := alice.n.RoomMessages(room.ID, 10)
+	for _, m := range msgs {
+		if len(m.Reactions) != 0 {
+			t.Fatalf("a non-member's reaction was stored: %+v", m.Reactions)
+		}
+	}
+}

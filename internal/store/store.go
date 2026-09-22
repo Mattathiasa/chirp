@@ -778,7 +778,12 @@ func sortBySeq(m []Message) {
 
 // ---- rooms ----
 
-const MaxRoomMembers = 32
+const (
+	MaxRoomMembers = 32
+	// MaxRoomReactions bounds reaction storage per message so a peer cannot
+	// grow a row without limit.
+	MaxRoomReactions = 128
+)
 
 // Room is a group chat. Membership changes arrive as events over an
 // authenticated session; see node.handleRoomEvent for what authorises one.
@@ -804,6 +809,17 @@ type RoomMessage struct {
 	Seq       uint64    `json:"seq"`
 	ReplyTo   string    `json:"replyTo,omitempty"`
 	SenderSeq uint64    `json:"senderSeq,omitempty"` // per-sender sequence number
+
+	// Reactions are persisted for rooms (unlike one-to-one reactions, which
+	// are ephemeral) so they survive a reload and reach members who were
+	// offline when the reaction was sent.
+	Reactions []RoomReaction `json:"reactions,omitempty"`
+}
+
+// RoomReaction is one member's emoji on one room message.
+type RoomReaction struct {
+	Sender string `json:"sender"`
+	Emoji  string `json:"emoji"`
 }
 
 // roomMsgKey builds a bbolt key for room messages.
@@ -1125,6 +1141,54 @@ func (s *Store) RoomRecordAttempt(msgID string, now time.Time) error {
 		nv, _ := json.Marshal(m)
 		return tx.Bucket(bRoomMsgs).Put(k, nv)
 	})
+}
+
+// ToggleRoomReaction adds a member's emoji to a room message, or removes it if
+// it is already there. Returns the message as it now stands and whether
+// anything changed.
+func (s *Store) ToggleRoomReaction(roomID, msgID, sender, emoji string) (RoomMessage, bool, error) {
+	var out RoomMessage
+	changed := false
+	err := s.db.Update(func(tx *bolt.Tx) error {
+		k := tx.Bucket(bRoomIdx).Get([]byte(msgID))
+		if k == nil {
+			return ErrNotFound
+		}
+		v := tx.Bucket(bRoomMsgs).Get(k)
+		if v == nil {
+			return ErrNotFound
+		}
+		var m RoomMessage
+		if err := json.Unmarshal(v, &m); err != nil {
+			return err
+		}
+		if !strings.EqualFold(m.Room, roomID) {
+			return ErrNotFound
+		}
+		for i, r := range m.Reactions {
+			if strings.EqualFold(r.Sender, sender) && r.Emoji == emoji {
+				m.Reactions = append(m.Reactions[:i], m.Reactions[i+1:]...)
+				changed = true
+				out = m
+				nv, _ := json.Marshal(m)
+				return tx.Bucket(bRoomMsgs).Put(k, nv)
+			}
+		}
+		if len(m.Reactions) >= MaxRoomReactions {
+			return errors.New("store: too many reactions on this message")
+		}
+		m.Reactions = append(m.Reactions, RoomReaction{Sender: sender, Emoji: emoji})
+		changed = true
+		out = m
+		nv, _ := json.Marshal(m)
+		return tx.Bucket(bRoomMsgs).Put(k, nv)
+	})
+	if err == nil {
+		if derr := s.decryptRoomMessage(&out); derr != nil {
+			return RoomMessage{}, false, derr
+		}
+	}
+	return out, changed, err
 }
 
 // NextRoomSenderSeq returns and consumes the next per-sender sequence number

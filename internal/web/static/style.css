@@ -295,6 +295,19 @@ p { margin: 0; }
 .in { width: 100%; height: 56px; padding: 0 20px; border: 2px solid var(--ink); border-radius: 18px; background: var(--white); font-size: 17px; font-weight: 600; }
 .in:focus { outline: 0; border-color: var(--cobalt); box-shadow: 0 5px 0 var(--cobalt); }
 
+/* Reaction chips under a room message. */
+.reacts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.m.me .reacts { justify-content: flex-end; }
+.react { display: inline-flex; align-items: center; gap: 5px; height: 28px; padding: 0 9px; border: 2px solid var(--ink); border-radius: 14px; background: var(--white); font-size: 14px; line-height: 1; }
+.react span { font: 700 12px var(--mono); color: var(--mute); }
+.react.on { background: var(--butter); }
+.react.on span { color: var(--ink); }
+.react.add { padding: 0 7px; color: var(--mute); }
+.reacts:hover .react.add, .react.add:focus-visible { color: var(--ink); }
+.picker { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px; }
+.picker .react { height: 52px; min-width: 52px; justify-content: center; font-size: 24px; border-radius: 17px; }
+
+
 .identicon { display: block; border-radius: 26px; }
 
 /* ---------- welcome ---------- */

@@ -86,6 +86,7 @@ func New(a *app.App) *Server {
 	m.HandleFunc("POST /api/rooms/{id}/members", s.needNode(s.addRoomMember))
 	m.HandleFunc("DELETE /api/rooms/{id}/members/{name}", s.needNode(s.removeRoomMember))
 	m.HandleFunc("POST /api/rooms/{id}/rename", s.needNode(s.renameRoom))
+	m.HandleFunc("POST /api/rooms/{id}/messages/{msgId}/react", s.needNode(s.reactRoomMessage))
 
 	// Go's built-in table has no entry for woff2, and a host without a system
 	// mime database would otherwise serve the fonts as octet-stream.
@@ -563,6 +564,20 @@ func (s *Server) addRoomMember(w http.ResponseWriter, r *http.Request, n *node.N
 
 func (s *Server) removeRoomMember(w http.ResponseWriter, r *http.Request, n *node.Node) {
 	if err := n.RemoveRoomMember(r.PathValue("id"), r.PathValue("name")); err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, 200, map[string]bool{"ok": true})
+}
+
+func (s *Server) reactRoomMessage(w http.ResponseWriter, r *http.Request, n *node.Node) {
+	var in struct {
+		Emoji string `json:"emoji"`
+	}
+	if !readJSON(w, r, &in) {
+		return
+	}
+	if err := n.SendRoomReaction(r.PathValue("id"), r.PathValue("msgId"), in.Emoji); err != nil {
 		fail(w, err)
 		return
 	}
