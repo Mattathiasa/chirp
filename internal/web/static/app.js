@@ -342,8 +342,20 @@ async function sendRoomMsg() {
 function sendCurrent() { return S.roomCur ? sendRoomMsg() : sendMsg(); }
 
 // ---------- rooms ----------
-const ROOM_COLORS = ['var(--cobalt)', 'var(--tang)', 'var(--butter)', 'var(--mint)', 'var(--pink)', 'var(--lilac)'];
-function roomColor(id) {
+// Each room tile takes a colour from the palette, keyed off its id. The text
+// colour is chosen per background rather than fixed: ink on cobalt is 2.9:1,
+// which fails WCAG AA, while white on cobalt is 6.6:1. Every pair below clears
+// 4.5:1, and because the id is random the wrong choice only showed up on some
+// runs.
+const ROOM_COLORS = [
+  { bg: 'var(--cobalt)', ink: '#fff' },
+  { bg: 'var(--tang)', ink: 'var(--ink)' },
+  { bg: 'var(--butter)', ink: 'var(--ink)' },
+  { bg: 'var(--mint)', ink: 'var(--ink)' },
+  { bg: 'var(--pink)', ink: 'var(--ink)' },
+  { bg: 'var(--lilac)', ink: 'var(--ink)' },
+];
+function roomTheme(id) {
   let n = 0;
   for (const c of String(id)) n = (n * 31 + c.charCodeAt(0)) >>> 0;
   return ROOM_COLORS[n % ROOM_COLORS.length];
@@ -375,7 +387,7 @@ function inviteCard(r) {
   });
   return h('div', { class: 'card invite' },
     h('div', { style: 'display:flex;gap:14px;align-items:center' },
-      h('span', { class: 'av' }, h('b', { style: `border-radius:18px;background:${roomColor(r.id)}` }, roomInitials(r.name))),
+      h('span', { class: 'av' }, h('b', { style: `border-radius:18px;background:${roomTheme(r.id).bg};color:${roomTheme(r.id).ink}` }, roomInitials(r.name))),
       h('div', { class: 'grow' },
         h('h3', { style: 'margin:0' }, r.name),
         h('div', { class: 'n' }, `${r.createdBy} invited you · with ${others.join(', ')}`))),
@@ -391,7 +403,7 @@ function inviteCard(r) {
 function viewRooms() {
   const back = h('button', { class: 'back', onclick: () => setView('chat'), 'aria-label': 'Back' }, icon('back', 24));
   const rows = joinedRooms().map((r) => h('button', { class: 'ob', style: 'width:100%;text-align:left', onclick: () => openRoom(r.id) },
-    h('span', { class: 'av' }, h('b', { style: `border-radius:18px;background:${roomColor(r.id)}` }, roomInitials(r.name))),
+    h('span', { class: 'av' }, h('b', { style: `border-radius:18px;background:${roomTheme(r.id).bg};color:${roomTheme(r.id).ink}` }, roomInitials(r.name))),
     h('div', { class: 'grow' },
       h('div', { class: 't' }, r.name),
       h('div', { class: 'n' }, `${r.members.length} member${r.members.length === 1 ? '' : 's'} · ${r.members.filter((m) => m.online).length} online`))));
@@ -448,7 +460,7 @@ function viewRoomThread(keepScroll) {
 
   const head = h('header', { class: 'head' },
     h('button', { class: 'back', 'aria-label': 'Back to rooms', onclick: () => { S.roomCur = null; renderSide(); renderMain(); renderPanel(); } }, icon('back', 24)),
-    h('span', { class: 'av' }, h('b', { style: `width:56px;height:56px;border-radius:18px;background:${roomColor(r.id)}` }, roomInitials(r.name))),
+    h('span', { class: 'av' }, h('b', { style: `width:56px;height:56px;border-radius:18px;background:${roomTheme(r.id).bg};color:${roomTheme(r.id).ink}` }, roomInitials(r.name))),
     h('div', { class: 'grow' }, h('h2', {}, r.name),
       h('div', { class: 'st' }, `${r.members.length} member${r.members.length === 1 ? '' : 's'} · ${r.members.filter((m) => m.online).length} online`)),
     h('div', { class: 'pill' },
@@ -623,14 +635,14 @@ function renderSide(force) {
     const who = last ? (last.sender === S.me.name ? 'You' : last.sender) : '';
     const preview = last ? `${who}: ${last.body}` : 'No messages yet';
     return h('button', { class: 'row', 'aria-current': S.view === 'rooms' && S.roomCur === r.id ? 'true' : 'false', onclick: () => openRoom(r.id) },
-      h('span', { class: 'av' }, h('b', { style: `border-radius:18px;background:${roomColor(r.id)}` }, roomInitials(r.name))),
+      h('span', { class: 'av' }, h('b', { style: `border-radius:18px;background:${roomTheme(r.id).bg};color:${roomTheme(r.id).ink}` }, roomInitials(r.name))),
       h('span', { class: 'grow' },
         h('span', { class: 'name' }, r.name),
         h('span', { class: 'sub' }, preview)),
       h('span', { class: 'meta' }, last ? fmtTime(last.ts) : '', (r.unread || 0) ? h('span', { class: 'badge' }, r.unread) : null));
   });
   const inviteRows = invites().filter(roomMatch).map((r) => h('button', { class: 'row', onclick: () => setView('rooms') },
-    h('span', { class: 'av' }, h('b', { style: `border-radius:18px;background:${roomColor(r.id)}` }, roomInitials(r.name))),
+    h('span', { class: 'av' }, h('b', { style: `border-radius:18px;background:${roomTheme(r.id).bg};color:${roomTheme(r.id).ink}` }, roomInitials(r.name))),
     h('span', { class: 'grow' },
       h('span', { class: 'name' }, r.name),
       h('span', { class: 'sub warn' }, `${r.createdBy} invited you`)),

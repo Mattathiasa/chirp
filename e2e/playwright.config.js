@@ -27,7 +27,11 @@ module.exports = defineConfig({
   webServer: {
     command: `../bin/chirp-demo -http 127.0.0.1:${PORT} -name Tester`,
     url: `http://127.0.0.1:${PORT}/api/state`,
-    reuseExistingServer: !process.env.CI,
+    // Never reuse a running demo. The UI is embedded in the binary with
+    // go:embed, so a leftover server from an earlier build serves stale
+    // markup and quietly makes the whole run meaningless - which is exactly
+    // how a fixed contrast bug appeared to still be failing.
+    reuseExistingServer: false,
     timeout: 30_000,
   },
 });
