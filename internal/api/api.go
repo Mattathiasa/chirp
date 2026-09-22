@@ -75,6 +75,17 @@ func New(a *app.App) *Server {
 	m.HandleFunc("GET /api/files/{id}/data", s.needNode(s.fileData))
 	m.HandleFunc("DELETE /api/files/{id}", s.needNode(s.deleteFile))
 
+	// Room routes.
+	m.HandleFunc("GET /api/rooms", s.needNode(s.rooms))
+	m.HandleFunc("POST /api/rooms", s.needNode(s.createRoom))
+	m.HandleFunc("GET /api/rooms/{id}", s.needNode(s.getRoom))
+	m.HandleFunc("GET /api/rooms/{id}/messages", s.needNode(s.roomMessages))
+	m.HandleFunc("POST /api/rooms/{id}/messages", s.needNode(s.sendRoomMessage))
+	m.HandleFunc("DELETE /api/rooms/{id}", s.needNode(s.deleteRoom))
+	m.HandleFunc("POST /api/rooms/{id}/members", s.needNode(s.addRoomMember))
+	m.HandleFunc("DELETE /api/rooms/{id}/members/{name}", s.needNode(s.removeRoomMember))
+	m.HandleFunc("POST /api/rooms/{id}/rename", s.needNode(s.renameRoom))
+
 	static, _ := fs.Sub(web.Files, "static")
 	m.Handle("GET /", http.FileServerFS(static))
 	return s
@@ -458,6 +469,117 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request, n *node.Node) {
 
 // ---- room handlers ----
 
+func (s *Server) rooms(w http.ResponseWriter, r *http.Request, n *node.Node) {
+	rooms, err := n.Rooms()
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	if rooms == nil {
+		rooms = []node.RoomView{}
+	}
+	writeJSON(w, 200, rooms)
+}
+
+func (s *Server) createRoom(w http.ResponseWriter, r *http.Request, n *node.Node) {
+	var in struct {
+		Name    string   `json:"name"`
+		Members []string `json:"members"`
+	}
+	if !readJSON(w, r, &in) {
+		return
+	}
+	room, err := n.CreateRoom(in.Name, in.Members)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, 201, room)
+}
+
+func (s *Server) getRoom(w http.ResponseWriter, r *http.Request, n *node.Node) {
+	room, err := n.GetRoom(r.PathValue("id"))
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, 200, room)
+}
+
+func (s *Server) roomMessages(w http.ResponseWriter, r *http.Request, n *node.Node) {
+	msgs, err := n.RoomMessages(r.PathValue("id"), 300)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	if msgs == nil {
+		msgs = []store.RoomMessage{}
+	}
+	writeJSON(w, 200, msgs)
+}
+
+func (s *Server) sendRoomMessage(w http.ResponseWriter, r *http.Request, n *node.Node) {
+	var in struct {
+		Body string `json:"body"`
+	}
+	if !readJSON(w, r, &in) {
+		return
+	}
+	msg, err := n.SendRoomMessage(r.PathValue("id"), in.Body)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, 201, msg)
+}
+
+func (s *Server) deleteRoom(w http.ResponseWriter, r *http.Request, n *node.Node) {
+	if err := n.LeaveRoom(r.PathValue("id")); err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, 200, map[string]bool{"ok": true})
+}
+
+func (s *Server) addRoomMember(w http.ResponseWriter, r *http.Request, n *node.Node) {
+	var in struct {
+		Name string `json:"name"`
+	}
+	if !readJSON(w, r, &in) {
+		return
+	}
+	if err := n.AddRoomMember(r.PathValue("id"), in.Name); err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, 200, map[string]bool{"ok": true})
+}
+
+func (s *Server) removeRoomMember(w http.ResponseWriter, r *http.Request, n *node.Node) {
+	if err := n.RemoveRoomMember(r.PathValue("id"), r.PathValue("name")); err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, 200, map[string]bool{"ok": true})
+}
+
+func (s *Server) renameRoom(w http.ResponseWriter, r *http.Request, n *node.Node) {
+	var in struct {
+		Name string `json:"name"`
+	}
+	if !readJSON(w, r, &in) {
+		return
+	}
+	if err := n.RenameRoom(r.PathValue("id"), in.Name); err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, 200, map[string]bool{"ok": true})
+}
+
+// ---- file handlers ----
+
+// sendFile accepts a multipart upload and queues it for the named peer.
 func (s *Server) sendFile(w http.ResponseWriter, r *http.Request, n *node.Node) {
 	if err := r.ParseMultipartForm(maxFileUpload); err != nil {
 		writeErr(w, http.StatusBadRequest, "could not parse upload: "+err.Error())

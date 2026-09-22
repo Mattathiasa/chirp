@@ -68,3 +68,28 @@
 * Messages are stored unencrypted at rest.
 * Pruning removes dedup entries with the message; a very late retransmit of a pruned message would reappear. Retention windows are far longer than any retry window.
 * Real Wi-Fi behaviour (client isolation, multicast filtering, firewalls) cannot be simulated. The Network screen and README explain the usual causes.
+
+## Rooms: threat model
+
+Rooms use **fan-out of one pairwise-encrypted copy per member**. There is no shared group key. Each message is encrypted separately to each member's Noise session, so forward secrecy properties come from the pairwise sessions. The cost is O(n) bandwidth per message, which is acceptable for LAN sizes (capped at 32 members).
+
+### What an ex-member retains
+
+When a member is removed from a room (or leaves), they retain all messages they received while they were a member. There is no cryptographic erasure: the messages are encrypted to their session key and they can decrypt them forever. This is inherent to the fan-out design and is documented in the UI.
+
+### What a malicious creator can do
+
+The creator is the only admin in v1. A malicious creator can:
+- Add any pinned peer to the room without their consent (they receive a "create" event).
+- Remove any member at any time.
+- Rename the room at any time.
+- Transfer ownership by leaving (ownership goes to the first remaining member in sorted order).
+
+A malicious creator **cannot**:
+- Read messages from members who have not joined (no shared key).
+- Forge messages as another member (each message is signed by the sender's Noise session).
+- Decrypt messages sent to other members (pairwise encryption).
+
+### Why unverified members show a warning
+
+Unverified members (pinned but not verified out-of-band) could be impersonated by an active attacker who has compromised the TOFU pin. The UI shows a warning badge on rooms containing unverified members so the user can make an informed trust decision before sharing sensitive content.

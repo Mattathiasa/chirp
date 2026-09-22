@@ -476,6 +476,17 @@ func (n *Node) outboxLoop(ctx context.Context) {
 				n.goRun(func() { n.flushFile(f.Peer, f.ID) })
 			}
 		}
+		rooms, err := n.cfg.Store.ListRooms()
+		if err == nil {
+			for _, r := range rooms {
+				for _, mb := range r.Members {
+					if mb == n.id.Name {
+						continue
+					}
+					n.flushRoomMember(mb, r.ID)
+				}
+			}
+		}
 	}
 }
 

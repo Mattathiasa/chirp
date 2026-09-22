@@ -39,6 +39,8 @@ const ICONS = {
   search: '<circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/>',
   trash: '<path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/>',
   spin: '<circle cx="12" cy="12" r="9" stroke-opacity=".25"/><path d="M12 3a9 9 0 0 1 9 9"/>',
+  users: '<circle cx="8" cy="9" r="3"/><circle cx="16.5" cy="10" r="2.5"/><path d="M2.5 19c.4-3.2 2.6-5 5.5-5s5.1 1.8 5.5 5"/><path d="M15 14.2c2.6.2 4.2 1.9 4.5 4.8"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>',
 };
 function icon(name, size = 20, cls = '') {
   const s = h('span', { class: cls, style: `display:inline-flex;width:${size}px;height:${size}px;flex:none` });
@@ -65,9 +67,9 @@ const enc = encodeURIComponent;
 
 // ---------- state ----------
 const S = {
-  setup: null, me: null, peers: [], cur: null, msgs: [], view: 'chat', panel: false,
+  setup: null, me: null, peers: [], rooms: [], cur: null, roomCur: null, msgs: [], view: 'chat', panel: false,
   settings: { retentionDays: 0, notify: true, previews: false },
-  outbox: [], diag: null, q: '', connected: true, unread: {}, modal: null, draft: {},
+  outbox: [], diag: null, q: '', connected: true, unread: {}, modal: null, draft: {}, typing: {},
 };
 const peerByName = (n) => S.peers.find((p) => p.name.toLowerCase() === (n || '').toLowerCase());
 const curPeer = () => peerByName(S.cur);
@@ -173,6 +175,10 @@ async function loadMessages() {
   if (!S.cur) return;
   try { S.msgs = await getJSON(`/api/peers/${enc(S.cur)}/messages`); renderMain(true); } catch { /* ignore */ }
 }
+async function loadRooms() {
+  try { S.rooms = await getJSON('/api/rooms'); } catch { /* ignore */ }
+  renderSide(); renderMain(); renderPanel();
+}
 async function loadOutbox() { try { S.outbox = await getJSON('/api/outbox'); } catch { /* ignore */ } }
 async function loadDiag() { try { S.diag = await getJSON('/api/diagnostics'); } catch { /* ignore */ } }
 async function loadSettings() { try { S.settings = await getJSON('/api/settings'); } catch { /* ignore */ } }
@@ -199,6 +205,19 @@ function connectEvents() {
       }
       if (S.view !== 'chat') { if (S.view === 'network') refreshNetworkSoon(); }
     }
+    if (e.type === 'roomMessage' && e.roomMessage) {
+      const m = e.roomMessage;
+      if (S.roomCur && e.room === S.roomCur) {
+        const i = S.msgs.findIndex((x) => x.id === m.id);
+        if (i >= 0) S.msgs[i] = m; else S.msgs.push(m);
+        renderMain(true);
+      } else if (m.dir === 'in') {
+        S.unread['r:' + e.room] = (S.unread['r:' + e.room] || 0) + 1;
+        notify(m.sender, m.body);
+      }
+      loadRooms();
+    }
+    if (e.type === 'roomStatus' || e.type === 'room') loadRooms();
     if (e.type === 'outbox' && S.view === 'network') refreshNetworkSoon();
     refreshPeersSoon();
   };
@@ -233,9 +252,9 @@ function buildComposer() {
   $ta = h('textarea', { rows: 1, 'aria-label': 'Message', placeholder: 'Message', maxlength: 4000 });
   $sendBtn = h('button', { class: 'send', 'aria-label': 'Send message', type: 'button' }, icon('send', 22));
   const grow = () => { $ta.style.height = 'auto'; $ta.style.height = Math.min($ta.scrollHeight, 140) + 'px'; };
-  $ta.addEventListener('input', () => { grow(); if (S.cur) S.draft[S.cur] = $ta.value; syncSend(); });
-  $ta.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); sendMsg(); } });
-  $sendBtn.addEventListener('click', sendMsg);
+  $ta.addEventListener('input', () => { grow(); if (S.cur) S.draft[S.cur] = $ta.value; else if (S.roomCur) S.draft['r:' + S.roomCur] = $ta.value; syncSend(); });
+  $ta.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); sendCurrent(); } });
+  $sendBtn.addEventListener('click', sendCurrent);
   composer = h('div', { class: 'composer' }, $ta, $sendBtn);
 }
 function syncSend() { $sendBtn.disabled = $ta.disabled || !$ta.value.trim(); }
@@ -249,6 +268,144 @@ async function sendMsg() {
     if (!S.msgs.find((x) => x.id === m.id)) S.msgs.push(m);
     renderMain(true);
   } catch (e) { $ta.value = body; syncSend(); toast(e.message, true); }
+}
+async function sendRoomMsg() {
+  const body = $ta.value.trim();
+  if (!body || !S.roomCur || $ta.disabled) return;
+  $ta.value = ''; S.draft['r:' + S.roomCur] = ''; $ta.style.height = 'auto'; syncSend();
+  try {
+    const m = await (await api('POST', `/api/rooms/${enc(S.roomCur)}/messages`, { body })).json();
+    if (!S.msgs.find((x) => x.id === m.id)) S.msgs.push(m);
+    renderMain(true);
+  } catch (e) { $ta.value = body; syncSend(); toast(e.message, true); }
+}
+
+// The composer is shared between one-to-one chats and rooms.
+function sendCurrent() { return S.roomCur ? sendRoomMsg() : sendMsg(); }
+
+// ---------- rooms ----------
+const ROOM_COLORS = ['var(--cobalt)', 'var(--tang)', 'var(--butter)', 'var(--mint)', 'var(--pink)', 'var(--lilac)'];
+function roomColor(id) {
+  let n = 0;
+  for (const c of String(id)) n = (n * 31 + c.charCodeAt(0)) >>> 0;
+  return ROOM_COLORS[n % ROOM_COLORS.length];
+}
+function roomInitials(name) {
+  return String(name || '?').trim().split(/\s+/).slice(0, 2).map((w) => w[0] || '').join('').toUpperCase() || '?';
+}
+const roomUnread = () => S.rooms.reduce((a, r) => a + (S.unread['r:' + r.id] || 0), 0);
+const curRoom = () => S.rooms.find((r) => r.id === S.roomCur);
+
+function viewRooms() {
+  const back = h('button', { class: 'back', onclick: () => setView('chat'), 'aria-label': 'Back' }, icon('back', 24));
+  const rows = S.rooms.map((r) => h('button', { class: 'ob', style: 'width:100%;text-align:left', onclick: () => openRoom(r.id) },
+    h('span', { class: 'av' }, h('b', { style: `border-radius:18px;background:${roomColor(r.id)}` }, roomInitials(r.name))),
+    h('div', { class: 'grow' },
+      h('div', { class: 't' }, r.name),
+      h('div', { class: 'n' }, `${r.members.length} member${r.members.length === 1 ? '' : 's'} · ${r.members.filter((m) => m.online).length} online`))));
+  return h('div', { class: 'page' }, h('div', { class: 'col' },
+    h('div', { style: 'display:flex;gap:8px;align-items:center' }, back, h('h1', {}, 'Rooms'),
+      h('span', { style: 'flex:1' }),
+      h('button', { class: 'btn primary', onclick: showCreateRoom }, icon('plus', 18), 'New room')),
+    h('p', { class: 'muted' }, 'A room sends one separately encrypted copy of every message to each member. There is no shared group key, so anyone who leaves keeps only what they already received.'),
+    rows.length ? h('div', { class: 'card' }, ...rows)
+      : h('div', { class: 'empty' },
+        h('div', { class: 'art' }, h('span', { style: 'color:var(--accent)' }, icon('users', 44))),
+        h('h3', {}, 'No rooms yet'),
+        h('p', {}, 'Create one and pick people you have already exchanged keys with.'))));
+}
+
+function showCreateRoom() {
+  const candidates = S.peers.filter((p) => p.trust === 'new' || p.trust === 'verified');
+  modal((box, close) => {
+    const name = h('input', { class: 'in', placeholder: 'Room name', maxlength: 60, 'aria-label': 'Room name' });
+    const picked = new Set();
+    const list = candidates.length ? candidates.map((p) => {
+      const cb = h('input', { type: 'checkbox', 'aria-label': `Include ${p.name}` });
+      cb.addEventListener('change', () => { cb.checked ? picked.add(p.name) : picked.delete(p.name); });
+      return h('label', { class: 'ob', style: 'cursor:pointer' }, cb, avatar(p, 34, false),
+        h('div', { class: 'grow' }, h('div', { class: 't' }, p.name),
+          h('div', { class: 'n' }, p.trust === 'verified' ? 'Verified' : 'Not verified yet')));
+    }) : [h('p', { class: 'muted' }, 'Nobody to add yet. You can only add people whose key you already have.')];
+    box.append(
+      h('div', { style: 'display:flex;justify-content:space-between;align-items:center' }, h('h1', {}, 'New room'),
+        h('button', { class: 'iconbtn', 'aria-label': 'Close', onclick: close }, icon('x', 20))),
+      name,
+      h('h3', { class: 'sec' }, 'Members'),
+      h('div', { class: 'card', style: 'box-shadow:none;max-height:260px;overflow:auto' }, ...list),
+      h('p', { class: 'muted', style: 'font-size:13px' }, 'Unverified members could be someone else holding that name. Verify in person before sharing anything sensitive.'),
+      h('button', { class: 'btn primary block', onclick: async () => {
+        if (!name.value.trim()) return toast('Give the room a name', true);
+        if (!picked.size) return toast('Pick at least one member', true);
+        try {
+          const r = await (await api('POST', '/api/rooms', { name: name.value.trim(), members: [...picked] })).json();
+          close(); await loadRooms(); openRoom(r.id);
+        } catch (e) { toast(e.message, true); }
+      } }, 'Create room'));
+    name.focus();
+  });
+}
+
+function viewRoomThread(keepScroll) {
+  const r = curRoom();
+  if (!r) return h('div', { class: 'empty' }, h('h3', {}, 'Room not found'));
+  const prev = $main.querySelector('.msgs');
+  const atBottom = prev ? prev.scrollHeight - prev.scrollTop - prev.clientHeight < 60 : true;
+  const mine = r.createdBy === S.me.name;
+
+  const head = h('header', { class: 'head' },
+    h('button', { class: 'back', 'aria-label': 'Back to rooms', onclick: () => { S.roomCur = null; renderSide(); renderMain(); renderPanel(); } }, icon('back', 24)),
+    h('span', { class: 'av' }, h('b', { style: `width:56px;height:56px;border-radius:18px;background:${roomColor(r.id)}` }, roomInitials(r.name))),
+    h('div', { class: 'grow' }, h('h2', {}, r.name),
+      h('div', { class: 'st' }, `${r.members.length} member${r.members.length === 1 ? '' : 's'} · ${r.members.filter((m) => m.online).length} online`)),
+    h('div', { class: 'pill' },
+      h('button', { class: 'pbtn', 'aria-label': 'Members', title: 'Members', 'aria-pressed': String(S.panel), onclick: () => { S.panel = !S.panel; renderPanel(); } }, icon('users', 20)),
+      mine ? h('button', { class: 'pbtn', 'aria-label': 'Rename room', title: 'Rename room', onclick: () => renameRoomPrompt(r) }, icon('gear', 20)) : null,
+      h('button', { class: 'pbtn red', 'aria-label': 'Leave room', title: 'Leave room', onclick: () => confirmBox(`Leave ${r.name}?`, 'You stop receiving messages. Your copy of the conversation is deleted from this device.', async () => {
+        await api('DELETE', `/api/rooms/${enc(r.id)}`); S.roomCur = null; await loadRooms(); renderMain();
+      }, 'Leave') }, icon('x', 20))));
+
+  const list = h('div', { class: 'msgs', role: 'log', 'aria-label': `Messages in ${r.name}` },
+    h('div', { class: 'notice' }, icon('lock', 14), 'One encrypted copy per member · no shared group key'),
+    S.msgs.length === 0 ? h('div', { class: 'notice' }, 'No messages yet.') : null,
+    ...S.msgs.map(roomMsgEl));
+
+  $ta.disabled = false;
+  $ta.placeholder = `Message ${r.name}`;
+  syncSend();
+
+  const el = h('div', { style: 'display:contents' }, head, list, composer);
+  queueMicrotask(() => {
+    const l = $main.querySelector('.msgs');
+    if (l && (atBottom || !keepScroll)) l.scrollTop = l.scrollHeight; else if (l && prev) l.scrollTop = prev.scrollTop;
+  });
+  return el;
+}
+
+function roomMsgEl(m) {
+  const mine = m.dir === 'out';
+  const st = mine
+    ? h('div', { class: 'stat' + (m.status === 'delivered' ? ' ok' : ' q') },
+      icon(m.status === 'delivered' ? 'checks' : 'clock', m.status === 'delivered' ? 16 : 13),
+      m.status === 'delivered' ? `${fmtTime(m.ts)} · Delivered to everyone` : 'Sending to members…')
+    : h('div', { class: 'stat' }, `${m.sender} · ${fmtTime(m.ts)}`);
+  return h('div', { class: 'm ' + (mine ? 'me' : 'them') }, h('div', { class: 'bubble' }, m.body), st);
+}
+
+function renameRoomPrompt(r) {
+  modal((box, close) => {
+    const inp = h('input', { class: 'in', value: r.name, maxlength: 60, 'aria-label': 'New room name' });
+    box.append(
+      h('div', { style: 'display:flex;justify-content:space-between;align-items:center' }, h('h1', {}, 'Rename room'),
+        h('button', { class: 'iconbtn', 'aria-label': 'Close', onclick: close }, icon('x', 20))),
+      inp,
+      h('button', { class: 'btn primary block', onclick: async () => {
+        if (!inp.value.trim()) return toast('Give the room a name', true);
+        try { await api('POST', `/api/rooms/${enc(r.id)}/rename`, { name: inp.value.trim() }); close(); await loadRooms(); renderMain(); }
+        catch (e) { toast(e.message, true); }
+      } }, 'Rename'));
+    inp.focus();
+  });
 }
 
 const queuedCount = () => S.peers.reduce((a, p) => a + (p.queued || 0), 0);
@@ -281,6 +438,7 @@ function renderNav() {
       h('button', { class: 'iconbtn sm', 'aria-label': 'Settings', onclick: () => setView('settings') }, icon('gear', 18))) : null,
     h('div', { class: 'nlist' },
       item('people', 'Chats', S.view === 'chat', () => setView('chat'), un || null),
+      item('users', 'Rooms', S.view === 'rooms', () => setView('rooms'), roomUnread() || null),
       item('wifi', 'Network', S.view === 'network', () => setView('network'), q || null),
       item('gear', 'Settings', S.view === 'settings', () => setView('settings'))),
     h('div', { class: 'nsec' }, 'Identity'),
@@ -300,6 +458,18 @@ function renderSide() {
   const people = S.peers.filter((p) => p.trust !== 'unknown' && match(p));
   const nearby = S.peers.filter((p) => p.trust === 'unknown' && match(p));
   const online = S.peers.filter((p) => p.online && match(p));
+  const roomMatch = (r) => !needle || r.name.toLowerCase().includes(needle);
+  const roomRows = S.rooms.filter(roomMatch).map((r) => {
+    const last = r.lastMsg;
+    const who = last ? (last.sender === S.me.name ? 'You' : last.sender) : '';
+    const preview = last ? `${who}: ${last.body}` : 'No messages yet';
+    return h('button', { class: 'row', 'aria-current': S.view === 'rooms' && S.roomCur === r.id ? 'true' : 'false', onclick: () => openRoom(r.id) },
+      h('span', { class: 'av' }, h('b', { style: `border-radius:18px;background:${roomColor(r.id)}` }, roomInitials(r.name))),
+      h('span', { class: 'grow' },
+        h('span', { class: 'name' }, r.name),
+        h('span', { class: 'sub' }, preview)),
+      h('span', { class: 'meta' }, last ? fmtTime(last.ts) : '', (r.unread || 0) ? h('span', { class: 'badge' }, r.unread) : null));
+  });
   const rowFor = (p) => {
     const un = S.unread[p.name.toLowerCase()] || 0;
     const preview = p.trust === 'changed' ? 'Key changed. Review before chatting.'
@@ -328,11 +498,12 @@ function renderSide() {
     h('div', { class: 'list' },
       people.length ? [h('div', { class: 'section' }, 'Your people'), ...people.map(rowFor)] : null,
       nearby.length ? [h('div', { class: 'section' }, 'Nearby'), ...nearby.map(rowFor)] : null,
-      !S.peers.length ? h('div', { class: 'empty' },
+      roomRows.length ? [h('div', { class: 'section' }, 'Rooms'), ...roomRows] : null,
+      !S.peers.length && !S.rooms.length ? h('div', { class: 'empty' },
         h('div', { class: 'art' }, h('span', { style: 'color:var(--accent)' }, icon('wifi', 44))),
         h('h3', {}, 'Looking for people'),
         h('p', {}, 'Open Chirp on another device on this Wi-Fi. Anyone nearby appears here within a few seconds.')) : null,
-      S.peers.length && !people.length && !nearby.length ? h('div', { class: 'empty' }, h('p', {}, `No one matches "${S.q}".`)) : null));
+      S.peers.length && !people.length && !nearby.length && !roomRows.length ? h('div', { class: 'empty' }, h('p', {}, `No one matches "${S.q}".`)) : null));
   $shell.classList.toggle('chat-open', S.view !== 'chat' || !!S.cur);
 }
 function logoSvg() {
@@ -345,13 +516,21 @@ async function setView(v) {
   S.view = v;
   if (v === 'network') await Promise.all([loadOutbox(), loadDiag()]);
   if (v === 'settings') await loadSettings();
+  if (v === 'rooms') await loadRooms();
   renderSide(); renderMain(); renderPanel();
 }
 async function openPeer(name) {
-  S.cur = name; S.view = 'chat'; S.unread[name.toLowerCase()] = 0; S.msgs = [];
+  S.cur = name; S.view = 'chat'; S.roomCur = null; S.unread[name.toLowerCase()] = 0; S.msgs = [];
   $ta.value = S.draft[name] || '';
   renderSide(); renderMain(); renderPanel();
   await loadMessages();
+  $ta.focus();
+}
+async function openRoom(id) {
+  S.roomCur = id; S.cur = null; S.view = 'rooms'; S.unread['r:' + id] = 0;
+  try { S.msgs = await getJSON(`/api/rooms/${enc(id)}/messages`); } catch { /* ignore */ }
+  $ta.value = S.draft['r:' + id] || '';
+  renderSide(); renderMain(); renderPanel();
   $ta.focus();
 }
 
@@ -365,6 +544,9 @@ function renderMain(keepScroll) {
 
   if (S.view === 'network') return $main.replaceChildren(...[banner, viewNetwork()].filter(Boolean));
   if (S.view === 'settings') return $main.replaceChildren(...[banner, viewSettings()].filter(Boolean));
+  if (S.view === 'rooms' && !S.roomCur) return $main.replaceChildren(...[banner, viewRooms()].filter(Boolean));
+
+  if (S.view === 'rooms' && S.roomCur) return $main.replaceChildren(...[banner, viewRoomThread(keepScroll)].filter(Boolean));
 
   const p = curPeer();
   if (!p) {
@@ -423,6 +605,7 @@ function msgEl(m, p) {
 // ---------- trust panel ----------
 function renderPanel() {
   if (!$panel) return;
+  if (S.view === 'rooms' && S.roomCur) return renderRoomPanel();
   const p = curPeer();
   const show = S.view === 'chat' && S.panel && p;
   $panel.style.display = show ? '' : 'none';
@@ -452,6 +635,59 @@ function renderPanel() {
   }
   kids.push(h('button', { class: 'btn danger block', onclick: () => confirmBox(`Forget ${p.name}?`, 'Deletes the pinned key and every message with them on this device. They keep their own copy.', async () => { await api('DELETE', `/api/peers/${enc(p.name)}`); S.cur = null; S.panel = false; await loadPeers(); }, 'Forget') }, 'Forget this person'));
   $panel.replaceChildren(h('div', { class: 'pad' }, ...kids));
+}
+
+// Members of the open room, with the creator's admin actions.
+function renderRoomPanel() {
+  const r = curRoom();
+  const show = S.panel && r;
+  $panel.style.display = show ? '' : 'none';
+  if (!show) return $panel.replaceChildren();
+  const mine = r.createdBy === S.me.name;
+  const unverified = r.members.filter((m) => {
+    const p = peerByName(m.name);
+    return m.name !== S.me.name && (!p || p.trust !== 'verified');
+  });
+  const rows = r.members.map((m) => h('div', { class: 'ob' },
+    h('div', { class: 'grow' },
+      h('div', { class: 't' }, m.name + (m.name === r.createdBy ? ' · creator' : '') + (m.name === S.me.name ? ' · you' : '')),
+      h('div', { class: 'n' }, m.online ? 'Online' : 'Offline')),
+    mine && m.name !== S.me.name
+      ? h('button', { class: 'iconbtn', 'aria-label': `Remove ${m.name}`, title: 'Remove', onclick: () => confirmBox(`Remove ${m.name}?`, 'They stop receiving new messages. They keep every message they already received; a room has no shared key to revoke.', async () => {
+          await api('DELETE', `/api/rooms/${enc(r.id)}/members/${enc(m.name)}`); await loadRooms(); renderMain(); renderPanel();
+        }, 'Remove') }, icon('trash', 18))
+      : null));
+
+  const kids = [
+    h('div', { style: 'display:flex;justify-content:space-between;align-items:center' }, h('h1', { style: 'font-size:20px' }, 'Members'),
+      h('button', { class: 'iconbtn', 'aria-label': 'Close panel', onclick: () => { S.panel = false; renderPanel(); } }, icon('x', 20))),
+    h('div', { class: 'card' }, ...rows),
+  ];
+  if (unverified.length) {
+    kids.push(h('div', { class: 'banner warn' }, icon('warn', 22),
+      h('div', { class: 'grow' }, h('b', {}, `${unverified.length} unverified member${unverified.length === 1 ? '' : 's'}.`),
+        ' Chirp trusted their keys on first sight. Compare fingerprints in person before sharing anything sensitive here.')));
+  }
+  if (mine) {
+    const addable = S.peers.filter((p) => (p.trust === 'new' || p.trust === 'verified') && !r.members.some((m) => m.name.toLowerCase() === p.name.toLowerCase()));
+    kids.push(h('button', { class: 'btn block', disabled: !addable.length, onclick: () => showAddMember(r, addable) }, icon('plus', 18), addable.length ? 'Add someone' : 'Nobody left to add'));
+  }
+  kids.push(h('p', { class: 'muted', style: 'font-size:13px' }, 'Only the creator can add, remove or rename. Every message is encrypted separately to each member.'));
+  $panel.replaceChildren(h('div', { class: 'pad' }, ...kids));
+}
+
+function showAddMember(r, addable) {
+  modal((box, close) => {
+    box.append(
+      h('div', { style: 'display:flex;justify-content:space-between;align-items:center' }, h('h1', {}, 'Add to room'),
+        h('button', { class: 'iconbtn', 'aria-label': 'Close', onclick: close }, icon('x', 20))),
+      h('div', { class: 'card', style: 'box-shadow:none;max-height:300px;overflow:auto' },
+        ...addable.map((p) => h('button', { class: 'ob', style: 'width:100%;text-align:left', onclick: async () => {
+          try { await api('POST', `/api/rooms/${enc(r.id)}/members`, { name: p.name }); close(); await loadRooms(); renderMain(); renderPanel(); }
+          catch (e) { toast(e.message, true); }
+        } }, avatar(p, 34, false), h('div', { class: 'grow' }, h('div', { class: 't' }, p.name),
+          h('div', { class: 'n' }, p.trust === 'verified' ? 'Verified' : 'Not verified yet'))))));
+  });
 }
 
 // ---------- identity dialog ----------

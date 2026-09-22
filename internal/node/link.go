@@ -156,6 +156,12 @@ func (l *link) readLoop(ctx context.Context) {
 				l.rxFileSize = 0
 				l.rxFileName = ""
 			}
+		case proto.TypeRoomMsg:
+			l.n.handleRoomMsg(l, e)
+		case proto.TypeRoomAck:
+			l.n.handleRoomAck(l, e)
+		case proto.TypeRoomEvent:
+			l.n.handleRoomEvent(l, e)
 		}
 	}
 }

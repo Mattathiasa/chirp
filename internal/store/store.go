@@ -29,6 +29,10 @@ var (
 	bMsgs       = []byte("msgs")       // key: peerKey 0x00 seq(8)
 	bIdx        = []byte("msgidx")     // key: message id -> msgs key
 	bOutbox     = []byte("outbox")     // key: message id -> msgs key (pending outbound)
+	bRooms      = []byte("rooms")      // key: roomID -> JSON Room
+	bRoomMsgs   = []byte("roommsgs")   // key: roomID 0x00 seq(8) -> JSON RoomMessage
+	bRoomIdx    = []byte("roomidx")    // key: message id -> roommsgs key
+	bRoomOutbox = []byte("roomoutbox") // key: roomID 0x00 memberName -> JSON {msgID}
 	bFiles      = []byte("files")      // key: fileID -> JSON File
 	bFileOutbox = []byte("fileoutbox") // key: fileID -> fileID (pending outbound)
 )
@@ -120,7 +124,7 @@ func openStore(path string, encKey []byte) (*Store, error) {
 		return nil, fmt.Errorf("store: open %s: %w", path, err)
 	}
 	err = db.Update(func(tx *bolt.Tx) error {
-		for _, b := range [][]byte{bMeta, bPeers, bMsgs, bIdx, bOutbox, bFiles, bFileOutbox} {
+		for _, b := range [][]byte{bMeta, bPeers, bMsgs, bIdx, bOutbox, bRooms, bRoomMsgs, bRoomIdx, bRoomOutbox, bFiles, bFileOutbox} {
 			if _, err := tx.CreateBucketIfNotExists(b); err != nil {
 				return err
 			}
@@ -764,6 +768,385 @@ func deleteMessages(tx *bolt.Tx, pred func(*Message) bool) error {
 }
 
 func sortBySeq(m []Message) {
+	for i := 1; i < len(m); i++ {
+		for j := i; j > 0 && m[j].Seq < m[j-1].Seq; j-- {
+			m[j], m[j-1] = m[j-1], m[j]
+		}
+	}
+}
+
+// ---- rooms ----
+
+const MaxRoomMembers = 32
+
+// Room is a group chat. Membership changes arrive as events over an
+// authenticated session; see node.handleRoomEvent for what authorises one.
+type Room struct {
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	Members   []string  `json:"members"` // display names (sorted)
+	CreatedBy string    `json:"createdBy"`
+	CreatedAt time.Time `json:"createdAt"`
+}
+
+// RoomMessage is one message in a room.
+type RoomMessage struct {
+	ID        string    `json:"id"`
+	Room      string    `json:"room"`   // room ID
+	Sender    string    `json:"sender"` // display name of sender
+	Dir       string    `json:"dir"`    // "in" or "out"
+	Body      string    `json:"body"`
+	TS        time.Time `json:"ts"`     // local time written or received
+	Status    string    `json:"status"` // "queued" | "delivered" | "received"
+	Attempts  int       `json:"attempts"`
+	LastTry   time.Time `json:"lastTry,omitempty"`
+	Seq       uint64    `json:"seq"`
+	ReplyTo   string    `json:"replyTo,omitempty"`
+	SenderSeq uint64    `json:"senderSeq,omitempty"` // per-sender sequence number
+}
+
+// roomMsgKey builds a bbolt key for room messages.
+func roomMsgKey(roomID string, seq uint64) []byte {
+	k := append([]byte(strings.ToLower(roomID)), 0)
+	var b [8]byte
+	binary.BigEndian.PutUint64(b[:], seq)
+	return append(k, b[:]...)
+}
+
+// roomOutboxKey builds a per-message outbox key for room messages.
+func roomOutboxKey(roomID, member, msgID string) []byte {
+	return []byte(strings.ToLower(roomID) + ":" + strings.ToLower(member) + ":" + strings.ToLower(msgID))
+}
+
+func (s *Store) encryptRoom(r *Room) (*Room, error) {
+	name, err := s.encryptString(r.Name)
+	if err != nil {
+		return nil, err
+	}
+	r.Name = name
+	return r, nil
+}
+
+func (s *Store) decryptRoom(r *Room) error {
+	name, err := s.decryptString(r.Name)
+	if err != nil {
+		return err
+	}
+	r.Name = name
+	return nil
+}
+
+func (s *Store) decryptRoomMessage(m *RoomMessage) error {
+	body, err := s.decryptString(m.Body)
+	if err != nil {
+		return err
+	}
+	m.Body = body
+	return nil
+}
+
+// CreateRoom creates a new room with the given members.
+func (s *Store) CreateRoom(r Room) error {
+	if len(r.Members) > MaxRoomMembers {
+		return fmt.Errorf("store: room has %d members, max is %d", len(r.Members), MaxRoomMembers)
+	}
+	enc, err := s.encryptRoom(&r)
+	if err != nil {
+		return err
+	}
+	return s.db.Update(func(tx *bolt.Tx) error {
+		v, _ := json.Marshal(enc)
+		return tx.Bucket(bRooms).Put([]byte(r.ID), v)
+	})
+}
+
+// GetRoom returns a room by ID. Members are decrypted.
+func (s *Store) GetRoom(id string) (*Room, error) {
+	var r Room
+	err := s.db.View(func(tx *bolt.Tx) error {
+		v := tx.Bucket(bRooms).Get([]byte(id))
+		if v == nil {
+			return ErrNotFound
+		}
+		return json.Unmarshal(v, &r)
+	})
+	if err != nil {
+		return nil, err
+	}
+	if err := s.decryptRoom(&r); err != nil {
+		return nil, err
+	}
+	return &r, nil
+}
+
+// ListRooms returns all rooms the user is a member of.
+func (s *Store) ListRooms() ([]Room, error) {
+	var out []Room
+	err := s.db.View(func(tx *bolt.Tx) error {
+		return tx.Bucket(bRooms).ForEach(func(_, v []byte) error {
+			var r Room
+			if err := json.Unmarshal(v, &r); err != nil {
+				return err
+			}
+			if err := s.decryptRoom(&r); err != nil {
+				return err
+			}
+			out = append(out, r)
+			return nil
+		})
+	})
+	return out, err
+}
+
+// UpdateRoom updates a room's fields in place.
+func (s *Store) UpdateRoom(r Room) error {
+	enc, err := s.encryptRoom(&r)
+	if err != nil {
+		return err
+	}
+	return s.db.Update(func(tx *bolt.Tx) error {
+		v, _ := json.Marshal(enc)
+		return tx.Bucket(bRooms).Put([]byte(r.ID), v)
+	})
+}
+
+// DeleteRoom removes a room and all its messages.
+func (s *Store) DeleteRoom(id string) error {
+	return s.db.Update(func(tx *bolt.Tx) error {
+		// Delete all room messages.
+		prefix := append([]byte(strings.ToLower(id)), 0)
+		c := tx.Bucket(bRoomMsgs).Cursor()
+		for k, _ := c.Seek(prefix); k != nil && bytes.HasPrefix(k, prefix); k, _ = c.Next() {
+			// Get the message ID from the value to clean up the index.
+			v := tx.Bucket(bRoomMsgs).Get(k)
+			if v != nil {
+				var m RoomMessage
+				if json.Unmarshal(v, &m) == nil {
+					tx.Bucket(bRoomIdx).Delete([]byte(m.ID)) //nolint:errcheck
+				}
+			}
+			c.Delete() //nolint:errcheck
+		}
+		// Delete outbox entries for this room.
+		oprefix := []byte(strings.ToLower(id) + ":")
+		oc := tx.Bucket(bRoomOutbox).Cursor()
+		for k, _ := oc.Seek(oprefix); k != nil && bytes.HasPrefix(k, oprefix); k, _ = oc.Next() {
+			oc.Delete() //nolint:errcheck
+		}
+		return tx.Bucket(bRooms).Delete([]byte(id))
+	})
+}
+
+// AddRoomMessage stores a room message. Returns dup=true if the ID already exists.
+func (s *Store) AddRoomMessage(m RoomMessage) (RoomMessage, bool, error) {
+	encBody, cerr := s.encryptString(m.Body)
+	if cerr != nil {
+		return RoomMessage{}, false, fmt.Errorf("store: encrypt body: %w", cerr)
+	}
+	m.Body = encBody
+	var stored RoomMessage
+	dup := false
+	err := s.db.Update(func(tx *bolt.Tx) error {
+		if tx.Bucket(bRoomIdx).Get([]byte(m.ID)) != nil {
+			dup = true
+			return nil
+		}
+		seq, err := tx.Bucket(bRoomMsgs).NextSequence()
+		if err != nil {
+			return err
+		}
+		m.Seq = seq
+		k := roomMsgKey(m.Room, seq)
+		v, _ := json.Marshal(m)
+		if err := tx.Bucket(bRoomMsgs).Put(k, v); err != nil {
+			return err
+		}
+		if err := tx.Bucket(bRoomIdx).Put([]byte(m.ID), k); err != nil {
+			return err
+		}
+		stored = m
+		return nil
+	})
+	if err == nil {
+		if derr := s.decryptRoomMessage(&stored); derr != nil {
+			return RoomMessage{}, false, derr
+		}
+	}
+	return stored, dup, err
+}
+
+// RoomMessages returns up to limit most recent messages in a room, oldest first.
+func (s *Store) RoomMessages(roomID string, limit int) ([]RoomMessage, error) {
+	if limit <= 0 || limit > 1000 {
+		limit = 200
+	}
+	var out []RoomMessage
+	err := s.db.View(func(tx *bolt.Tx) error {
+		c := tx.Bucket(bRoomMsgs).Cursor()
+		prefix := append([]byte(strings.ToLower(roomID)), 0)
+		upper := append(append([]byte(nil), prefix...), 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff)
+		k, v := c.Seek(upper)
+		if k == nil {
+			k, v = c.Last()
+		} else {
+			k, v = c.Prev()
+		}
+		for ; k != nil && bytes.HasPrefix(k, prefix) && len(out) < limit; k, v = c.Prev() {
+			var m RoomMessage
+			if err := json.Unmarshal(v, &m); err != nil {
+				return err
+			}
+			if derr := s.decryptRoomMessage(&m); derr != nil {
+				return derr
+			}
+			out = append(out, m)
+		}
+		return nil
+	})
+	// Reverse to oldest-first.
+	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
+		out[i], out[j] = out[j], out[i]
+	}
+	return out, err
+}
+
+// RoomPending returns undelivered outbound room messages for a given member.
+func (s *Store) RoomPending(roomID, member string) ([]RoomMessage, error) {
+	var out []RoomMessage
+	err := s.db.View(func(tx *bolt.Tx) error {
+		prefix := []byte(strings.ToLower(roomID) + ":" + strings.ToLower(member) + ":")
+		return tx.Bucket(bRoomOutbox).ForEach(func(k, v []byte) error {
+			if !bytes.HasPrefix(k, prefix) {
+				return nil
+			}
+			msgID := string(v)
+			idxKey := tx.Bucket(bRoomIdx).Get([]byte(msgID))
+			if idxKey == nil {
+				return nil
+			}
+			mv := tx.Bucket(bRoomMsgs).Get(idxKey)
+			if mv == nil {
+				return nil
+			}
+			var m RoomMessage
+			if err := json.Unmarshal(mv, &m); err != nil {
+				return err
+			}
+			if derr := s.decryptRoomMessage(&m); derr != nil {
+				return derr
+			}
+			out = append(out, m)
+			return nil
+		})
+	})
+	sortByRoomSeq(out)
+	return out, err
+}
+
+// MarkRoomDelivered marks a room message as delivered for a specific member.
+// If all members have been marked delivered, the message status becomes "delivered".
+func (s *Store) MarkRoomDelivered(roomID, member, msgID string) (RoomMessage, bool, error) {
+	var out RoomMessage
+	changed := false
+	err := s.db.Update(func(tx *bolt.Tx) error {
+		k := tx.Bucket(bRoomIdx).Get([]byte(msgID))
+		if k == nil {
+			return ErrNotFound
+		}
+		v := tx.Bucket(bRoomMsgs).Get(k)
+		if v == nil {
+			return ErrNotFound
+		}
+		var m RoomMessage
+		if err := json.Unmarshal(v, &m); err != nil {
+			return err
+		}
+		out = m
+		if m.Status == StatusDelivered {
+			return nil
+		}
+		// Remove this member from the outbox.
+		tx.Bucket(bRoomOutbox).Delete(roomOutboxKey(roomID, member, msgID)) //nolint:errcheck
+
+		// Check if all members have been delivered by looking at remaining outbox entries.
+		r, rerr := getRoom(tx, roomID)
+		if rerr != nil {
+			return rerr
+		}
+		allDelivered := true
+		for _, mb := range r.Members {
+			if mb == m.Sender {
+				continue // sender doesn't need to receive their own message
+			}
+			pfx := []byte(strings.ToLower(roomID) + ":" + strings.ToLower(mb) + ":")
+			c := tx.Bucket(bRoomOutbox).Cursor()
+			if k, _ := c.Seek(pfx); k != nil && bytes.HasPrefix(k, pfx) {
+				allDelivered = false
+				break
+			}
+		}
+		if allDelivered {
+			m.Status = StatusDelivered
+			nv, _ := json.Marshal(m)
+			if err := tx.Bucket(bRoomMsgs).Put(k, nv); err != nil {
+				return err
+			}
+			changed = true
+		}
+		out = m
+		return nil
+	})
+	if err == nil {
+		if derr := s.decryptRoomMessage(&out); derr != nil {
+			return RoomMessage{}, false, derr
+		}
+	}
+	return out, changed, err
+}
+
+// RoomRecordAttempt bumps the attempt counter for a room outbox message.
+func (s *Store) RoomRecordAttempt(msgID string, now time.Time) error {
+	return s.db.Update(func(tx *bolt.Tx) error {
+		k := tx.Bucket(bRoomIdx).Get([]byte(msgID))
+		if k == nil {
+			return ErrNotFound
+		}
+		v := tx.Bucket(bRoomMsgs).Get(k)
+		if v == nil {
+			return ErrNotFound
+		}
+		var m RoomMessage
+		if err := json.Unmarshal(v, &m); err != nil {
+			return err
+		}
+		m.Attempts++
+		m.LastTry = now
+		nv, _ := json.Marshal(m)
+		return tx.Bucket(bRoomMsgs).Put(k, nv)
+	})
+}
+
+// AddRoomMemberToOutbox adds a pending delivery entry for a member.
+func (s *Store) AddRoomMemberToOutbox(roomID, member, msgID string) error {
+	return s.db.Update(func(tx *bolt.Tx) error {
+		return tx.Bucket(bRoomOutbox).Put(roomOutboxKey(roomID, member, msgID), []byte(msgID))
+	})
+}
+
+// GetRoomWithTx returns a room within an existing transaction (for internal use).
+func getRoom(tx *bolt.Tx, id string) (*Room, error) {
+	v := tx.Bucket(bRooms).Get([]byte(id))
+	if v == nil {
+		return nil, ErrNotFound
+	}
+	var r Room
+	if err := json.Unmarshal(v, &r); err != nil {
+		return nil, err
+	}
+	return &r, nil
+}
+
+func sortByRoomSeq(m []RoomMessage) {
 	for i := 1; i < len(m); i++ {
 		for j := i; j > 0 && m[j].Seq < m[j-1].Seq; j-- {
 			m[j], m[j-1] = m[j-1], m[j]
