@@ -309,3 +309,37 @@ func TestNoGoroutineLeakAcrossReconnects(t *testing.T) {
 		t.Fatalf("goroutines grew from %d to %d over 20 reconnects", before, after)
 	}
 }
+
+// react, del and delall all point at another message. The sender and the
+// receiver have to agree on which field carries that pointer: react built an
+// envelope that would not encode at all, and delall encoded fine but the
+// receiver read an empty field and deleted nothing.
+func TestMessagePointerEnvelopesRoundTrip(t *testing.T) {
+	hub := discovery.NewHub()
+	alice := newRig(t, hub, "Alice")
+	bob := newRig(t, hub, "Bob")
+	waitFor(t, "sessions", func() bool { return online(alice.n, "Bob") && online(bob.n, "Alice") })
+
+	m, err := alice.n.Send("Bob", "delete me")
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "bob receives", func() bool {
+		ms, _ := bob.st.Messages("Alice", 10)
+		return len(ms) == 1
+	})
+
+	// A reaction must at minimum encode and reach the peer.
+	if err := alice.n.SendReaction("Bob", "🎉", m.ID); err != nil {
+		t.Fatalf("SendReaction: %v", err)
+	}
+
+	// delall must actually remove the message on the far side.
+	if err := alice.n.DeleteMessageForEveryone("Bob", m.ID); err != nil {
+		t.Fatalf("DeleteMessageForEveryone: %v", err)
+	}
+	waitFor(t, "bob drops the message", func() bool {
+		ms, _ := bob.st.Messages("Alice", 10)
+		return len(ms) == 0
+	})
+}

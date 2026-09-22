@@ -262,7 +262,7 @@ func (n *Node) DeleteMessageForEveryone(peer, targetID string) error {
 	if l == nil {
 		return ErrUnknownPeer
 	}
-	return l.send(proto.Envelope{T: proto.TypeDelAll, ID: targetID})
+	return l.send(proto.Envelope{T: proto.TypeDelAll, Target: targetID})
 }
 
 // RemoteCaps returns the capabilities of a connected peer, or nil if offline.

@@ -57,9 +57,9 @@ Each transport frame carries one ChaCha20-Poly1305 ciphertext of one JSON envelo
 | `msg` | `id` (32 hex), `ts` (sender millis), `body` (1..4096 bytes, valid UTF-8), `replyTo` (optional, message ID) | a chat message, optionally replying to another |
 | `ack` | `id` | the receiver has **persisted** message `id` |
 | `ping` | none | keepalive, sent every 10 s |
-| `react` | `id` (32 hex), `emoji` (1..32 runes) | emoji reaction to message `id` |
-| `del` | `id` (32 hex) | delete-for-me (local only) |
-| `delall` | `id` (32 hex) | delete-for-everyone (best effort, peer deletes locally) |
+| `react` | `target` (32 hex, message ID), `emoji` (1..32 runes) | emoji reaction to message `target` |
+| `del` | `target` (32 hex, message ID) | delete-for-me (local only) |
+| `delall` | `target` (32 hex, message ID) | delete-for-everyone (best effort, peer deletes locally) |
 | `typing` | none | ephemeral typing indicator, not persisted |
 | `read` | `target` (32 hex, message ID) | read receipt for message `target` |
 | `file` | `id` (32 hex), `src` (filename), `size` (bytes, ≤100 MB), `hash` (64 hex SHA-256) | file transfer metadata |

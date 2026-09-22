@@ -194,22 +194,27 @@ func (e Envelope) validate() error {
 			return errors.New("proto: ping must be empty")
 		}
 	case TypeReact:
-		if err := checkID(e.ID); err != nil {
-			return err
+		// react, del, delall and read all point at another message, and they
+		// all carry that pointer in target.
+		if err := checkID(e.Target); err != nil {
+			return fmt.Errorf("proto: bad react target: %w", err)
 		}
 		if e.Emoji == "" {
 			return errors.New("proto: react must have emoji")
 		}
-		if len(e.Emoji) > 32 { // rune count
+		if utf8.RuneCountInString(e.Emoji) > 32 {
 			return errors.New("proto: emoji too long")
 		}
+		if !utf8.ValidString(e.Emoji) {
+			return errors.New("proto: emoji is not valid UTF-8")
+		}
 	case TypeDel:
-		if err := checkID(e.ID); err != nil {
-			return err
+		if err := checkID(e.Target); err != nil {
+			return fmt.Errorf("proto: bad del target: %w", err)
 		}
 	case TypeDelAll:
-		if err := checkID(e.ID); err != nil {
-			return err
+		if err := checkID(e.Target); err != nil {
+			return fmt.Errorf("proto: bad delall target: %w", err)
 		}
 	case TypeTyping:
 		// typing is ephemeral, no ID needed

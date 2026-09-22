@@ -45,9 +45,9 @@ func TestEnvelope(t *testing.T) {
 		{T: TypeMsg, ID: id, TS: 1, Body: "hi"},
 		{T: TypeAck, ID: id},
 		{T: TypePing},
-		{T: TypeReact, ID: id, Emoji: "👍"},
-		{T: TypeDel, ID: id},
-		{T: TypeDelAll, ID: id},
+		{T: TypeReact, Target: id, Emoji: "👍"},
+		{T: TypeDel, Target: id},
+		{T: TypeDelAll, Target: id},
 		{T: TypeTyping},
 		{T: TypeRead, Target: id},
 	}
@@ -158,5 +158,51 @@ func TestMaxChunkEnvelopeFitsInAFrame(t *testing.T) {
 	}
 	if len(got.Chunk) != ChunkSize {
 		t.Fatalf("chunk round-trip length %d, want %d", len(got.Chunk), ChunkSize)
+	}
+}
+
+// Each of these envelope types points at another message. The field that
+// carries the pointer must be the one the sender fills in; validating a
+// different field than the code uses made react unencodable and delall a
+// silent no-op on the receiving side.
+func TestMessagePointerTypesValidateOnTarget(t *testing.T) {
+	const target = "ffffffffffffffffffffffffffffffff"
+	for _, tc := range []struct {
+		name string
+		ok   Envelope
+		bad  Envelope
+	}{
+		{"react", Envelope{T: TypeReact, Target: target, Emoji: "🎉"}, Envelope{T: TypeReact, ID: target, Emoji: "🎉"}},
+		{"del", Envelope{T: TypeDel, Target: target}, Envelope{T: TypeDel, ID: target}},
+		{"delall", Envelope{T: TypeDelAll, Target: target}, Envelope{T: TypeDelAll, ID: target}},
+		{"read", Envelope{T: TypeRead, Target: target}, Envelope{T: TypeRead, ID: target}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b, err := Encode(tc.ok)
+			if err != nil {
+				t.Fatalf("a well-formed %s did not encode: %v", tc.name, err)
+			}
+			got, err := Decode(b)
+			if err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			if got.Target != target {
+				t.Fatalf("target lost in transit: %q", got.Target)
+			}
+			if _, err := Encode(tc.bad); err == nil {
+				t.Fatalf("%s accepted with the pointer in id instead of target", tc.name)
+			}
+		})
+	}
+}
+
+// Emoji length is a rune count, not a byte count: one emoji is several bytes.
+func TestReactEmojiLengthIsCountedInRunes(t *testing.T) {
+	const target = "ffffffffffffffffffffffffffffffff"
+	if _, err := Encode(Envelope{T: TypeReact, Target: target, Emoji: strings.Repeat("🎉", 10)}); err != nil {
+		t.Fatalf("10 emoji rejected: %v", err)
+	}
+	if _, err := Encode(Envelope{T: TypeReact, Target: target, Emoji: strings.Repeat("a", 33)}); err == nil {
+		t.Fatal("33 runes accepted")
 	}
 }
