@@ -82,11 +82,13 @@ type Settings struct {
 	RetentionDays int  `json:"retentionDays"` // 0 = keep forever
 	Notify        bool `json:"notify"`        // browser notifications while the tab is hidden
 	Previews      bool `json:"previews"`      // show message text in notifications and the peer list
+	Typing        bool `json:"typing"`        // tell peers when you are typing (off by default)
+	Receipts      bool `json:"receipts"`      // tell peers when you have read a message (off by default)
 }
 
 // DefaultSettings are used until the user changes something.
 func DefaultSettings() Settings {
-	return Settings{RetentionDays: 0, Notify: true, Previews: false}
+	return Settings{RetentionDays: 0, Notify: true, Previews: false, Typing: false, Receipts: false}
 }
 
 // Store wraps a bbolt DB with optional encryption at rest.

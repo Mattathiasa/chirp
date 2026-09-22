@@ -284,3 +284,53 @@ func TestEveryFontFaceURLResolves(t *testing.T) {
 	}
 	t.Logf("checked %d font files", len(refs))
 }
+
+// These node methods existed with no route at all, so the UI could not reach
+// reactions, typing, read receipts, deleting a message, or search.
+func TestMessageActionRoutesExist(t *testing.T) {
+	hub := discovery.NewHub()
+	c := newClient(t, newApp(t, hub))
+	if r, b := c.do("POST", "/api/setup", map[string]string{"name": "Alex"}, nil); r.StatusCode != 200 {
+		t.Fatalf("setup: %d %s", r.StatusCode, b)
+	}
+
+	// Unknown peer is a 404, not a 404-because-there-is-no-such-route.
+	for _, tc := range []struct {
+		method, path string
+		body         any
+	}{
+		{"POST", "/api/peers/Nobody/react", map[string]string{"emoji": "🎉", "target": "aabbccdd11223344aabbccdd11223344"}},
+		{"POST", "/api/peers/Nobody/typing", nil},
+		{"POST", "/api/peers/Nobody/read", map[string]string{"target": "aabbccdd11223344aabbccdd11223344"}},
+	} {
+		r, b := c.do(tc.method, tc.path, tc.body, nil)
+		if r.StatusCode == 405 || (r.StatusCode == 404 && strings.Contains(string(b), "page not found")) {
+			t.Errorf("%s %s is not routed: %d %s", tc.method, tc.path, r.StatusCode, b)
+		}
+	}
+
+	// Search answers, and an empty query is not an error.
+	r, b := c.do("GET", "/api/search?q=", nil, nil)
+	if r.StatusCode != 200 || string(bytes.TrimSpace(b)) != "[]" {
+		t.Errorf("empty search: %d %s", r.StatusCode, b)
+	}
+	if r, b := c.do("GET", "/api/search?q=hello", nil, nil); r.StatusCode != 200 {
+		t.Errorf("search: %d %s", r.StatusCode, b)
+	}
+
+	// Delete-for-everyone needs to know which peer to ask.
+	if r, _ := c.do("DELETE", "/api/messages/aabbccdd11223344aabbccdd11223344?everyone=1", nil, nil); r.StatusCode != 400 {
+		t.Errorf("delete for everyone with no peer: %d", r.StatusCode)
+	}
+
+	// Mutating routes stay behind the CSRF header.
+	for _, p := range []string{"/api/peers/Nobody/react", "/api/peers/Nobody/typing", "/api/messages/x"} {
+		m := "POST"
+		if strings.HasPrefix(p, "/api/messages") {
+			m = "DELETE"
+		}
+		if r, _ := c.do(m, p, nil, map[string]string{"X-Chirp": ""}); r.StatusCode != 403 {
+			t.Errorf("%s %s accepted without X-Chirp: %d", m, p, r.StatusCode)
+		}
+	}
+}

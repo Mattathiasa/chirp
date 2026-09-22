@@ -343,3 +343,99 @@ func TestMessagePointerEnvelopesRoundTrip(t *testing.T) {
 		return len(ms) == 0
 	})
 }
+
+// reply-to existed in the store, the envelope and the docs, but nothing ever
+// filled it in or put it on the wire, so every quote was lost in transit.
+func TestReplyToSurvivesTheWire(t *testing.T) {
+	hub := discovery.NewHub()
+	alice := newRig(t, hub, "Alice")
+	bob := newRig(t, hub, "Bob")
+	waitFor(t, "sessions", func() bool { return online(alice.n, "Bob") && online(bob.n, "Alice") })
+
+	first, err := alice.n.Send("Bob", "what time?")
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "bob has the first", func() bool {
+		ms, _ := bob.st.Messages("Alice", 10)
+		return len(ms) == 1
+	})
+
+	reply, err := alice.n.SendReply("Bob", "half past", first.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reply.ReplyTo != first.ID {
+		t.Fatalf("sender did not record the quote: %q", reply.ReplyTo)
+	}
+	waitFor(t, "bob has the reply", func() bool {
+		ms, _ := bob.st.Messages("Alice", 10)
+		return len(ms) == 2
+	})
+	ms, _ := bob.st.Messages("Alice", 10)
+	if ms[1].ReplyTo != first.ID {
+		t.Fatalf("quote lost in transit: %q, want %q", ms[1].ReplyTo, first.ID)
+	}
+}
+
+// Typing and read receipts are privacy settings, off by default, and enforced
+// in the node so the local API cannot be used to leak them either way.
+func TestTypingAndReceiptsRespectTheSettings(t *testing.T) {
+	hub := discovery.NewHub()
+	alice := newRig(t, hub, "Alice")
+	bob := newRig(t, hub, "Bob")
+	waitFor(t, "sessions", func() bool { return online(alice.n, "Bob") && online(bob.n, "Alice") })
+
+	seen := make(chan string, 8)
+	evs, stop := bob.n.Subscribe()
+	defer stop()
+	go func() {
+		for e := range evs {
+			if e.Type == "typing" || e.Type == "read" {
+				seen <- e.Type
+			}
+		}
+	}()
+
+	m, _ := alice.n.Send("Bob", "hello")
+	waitFor(t, "bob receives", func() bool {
+		ms, _ := bob.st.Messages("Alice", 10)
+		return len(ms) == 1
+	})
+
+	// Off by default: nothing goes out.
+	if err := alice.n.SendTyping("Bob"); err != nil {
+		t.Fatal(err)
+	}
+	if err := alice.n.SendReadReceipt("Bob", m.ID); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case got := <-seen:
+		t.Fatalf("%s was sent while the setting was off", got)
+	case <-time.After(400 * time.Millisecond):
+	}
+
+	// Turned on, they are delivered.
+	st, _ := alice.st.Settings()
+	st.Typing, st.Receipts = true, true
+	if err := alice.st.SaveSettings(st); err != nil {
+		t.Fatal(err)
+	}
+	if err := alice.n.SendTyping("Bob"); err != nil {
+		t.Fatal(err)
+	}
+	if err := alice.n.SendReadReceipt("Bob", m.ID); err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	deadline := time.After(3 * time.Second)
+	for len(got) < 2 {
+		select {
+		case k := <-seen:
+			got[k] = true
+		case <-deadline:
+			t.Fatalf("only saw %v after enabling both settings", got)
+		}
+	}
+}

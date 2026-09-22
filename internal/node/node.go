@@ -393,6 +393,11 @@ func (n *Node) linkFor(name string) *link {
 
 // Send queues a message for a pinned peer and tries to deliver it now.
 func (n *Node) Send(peer, body string) (store.Message, error) {
+	return n.SendReply(peer, body, "")
+}
+
+// SendReply queues a message that quotes an earlier one. replyTo may be empty.
+func (n *Node) SendReply(peer, body, replyTo string) (store.Message, error) {
 	if body == "" || len(body) > proto.MaxBody || !utf8.ValidString(body) {
 		return store.Message{}, ErrBadBody
 	}
@@ -410,7 +415,8 @@ func (n *Node) Send(peer, body string) (store.Message, error) {
 		return store.Message{}, err
 	}
 	m, _, err := n.cfg.Store.AddMessage(store.Message{
-		ID: id, Peer: p.Name, Dir: store.DirOut, Body: body, TS: time.Now(), Status: store.StatusQueued,
+		ID: id, Peer: p.Name, Dir: store.DirOut, Body: body, TS: time.Now(),
+		Status: store.StatusQueued, ReplyTo: replyTo,
 	})
 	if err != nil {
 		return store.Message{}, err
@@ -443,7 +449,7 @@ func (n *Node) flush(peer string, force bool) {
 		if err != nil {
 			continue
 		}
-		if err := l.send(proto.Envelope{T: proto.TypeMsg, ID: m.ID, TS: m.TS.UnixMilli(), Body: m.Body}); err != nil {
+		if err := l.send(proto.Envelope{T: proto.TypeMsg, ID: m.ID, TS: m.TS.UnixMilli(), Body: m.Body, ReplyTo: m.ReplyTo}); err != nil {
 			n.logf("send to %q failed: %v", peer, err)
 			l.conn.Close()
 			return

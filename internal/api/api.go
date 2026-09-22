@@ -57,6 +57,11 @@ func New(a *app.App) *Server {
 	m.HandleFunc("POST /api/peers/{name}/verify", s.needNode(s.verify))
 	m.HandleFunc("POST /api/peers/{name}/accept-key", s.needNode(s.acceptKey))
 	m.HandleFunc("POST /api/peers/{name}/retry", s.needNode(s.retry))
+	m.HandleFunc("POST /api/peers/{name}/react", s.needNode(s.react))
+	m.HandleFunc("POST /api/peers/{name}/typing", s.needNode(s.typing))
+	m.HandleFunc("POST /api/peers/{name}/read", s.needNode(s.readReceipt))
+	m.HandleFunc("DELETE /api/messages/{id}", s.needNode(s.deleteMessage))
+	m.HandleFunc("GET /api/search", s.needNode(s.search))
 	m.HandleFunc("DELETE /api/peers/{name}", s.needNode(s.forget))
 	m.HandleFunc("POST /api/dial", s.needNode(s.dial))
 	m.HandleFunc("POST /api/invite/parse", s.needNode(s.parseInvite))
@@ -285,12 +290,13 @@ func (s *Server) messages(w http.ResponseWriter, r *http.Request, n *node.Node) 
 
 func (s *Server) send(w http.ResponseWriter, r *http.Request, n *node.Node) {
 	var in struct {
-		Body string `json:"body"`
+		Body    string `json:"body"`
+		ReplyTo string `json:"replyTo"`
 	}
 	if !readJSON(w, r, &in) {
 		return
 	}
-	m, err := n.Send(r.PathValue("name"), in.Body)
+	m, err := n.SendReply(r.PathValue("name"), in.Body, in.ReplyTo)
 	if err != nil {
 		fail(w, err)
 		return
@@ -570,6 +576,86 @@ func (s *Server) removeRoomMember(w http.ResponseWriter, r *http.Request, n *nod
 		return
 	}
 	writeJSON(w, 200, map[string]bool{"ok": true})
+}
+
+// react toggles an emoji on a one-to-one message. Reactions are ephemeral for
+// one-to-one chats: they are relayed to the peer and surfaced as an event, not
+// stored. Room reactions, which do persist, go through the room routes.
+func (s *Server) react(w http.ResponseWriter, r *http.Request, n *node.Node) {
+	var in struct {
+		Emoji  string `json:"emoji"`
+		Target string `json:"target"`
+	}
+	if !readJSON(w, r, &in) {
+		return
+	}
+	if err := n.SendReaction(r.PathValue("name"), in.Emoji, in.Target); err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, 200, map[string]bool{"ok": true})
+}
+
+func (s *Server) typing(w http.ResponseWriter, r *http.Request, n *node.Node) {
+	if err := n.SendTyping(r.PathValue("name")); err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, 200, map[string]bool{"ok": true})
+}
+
+func (s *Server) readReceipt(w http.ResponseWriter, r *http.Request, n *node.Node) {
+	var in struct {
+		Target string `json:"target"`
+	}
+	if !readJSON(w, r, &in) {
+		return
+	}
+	if err := n.SendReadReceipt(r.PathValue("name"), in.Target); err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, 200, map[string]bool{"ok": true})
+}
+
+// deleteMessage removes a message here. With ?everyone=1 it also asks the peer
+// to drop their copy, which is a request, not a guarantee: they may be offline,
+// may be running something else, and already have the words on their screen.
+func (s *Server) deleteMessage(w http.ResponseWriter, r *http.Request, n *node.Node) {
+	id := r.PathValue("id")
+	if r.URL.Query().Get("everyone") == "1" {
+		peer := r.URL.Query().Get("peer")
+		if peer == "" {
+			writeErr(w, 400, "peer is required to delete for everyone")
+			return
+		}
+		if err := n.DeleteMessageForEveryone(peer, id); err != nil {
+			fail(w, err)
+			return
+		}
+	}
+	if err := n.DeleteMessage(id); err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, 200, map[string]bool{"ok": true})
+}
+
+func (s *Server) search(w http.ResponseWriter, r *http.Request, n *node.Node) {
+	q := r.URL.Query().Get("q")
+	if strings.TrimSpace(q) == "" {
+		writeJSON(w, 200, []store.SearchResult{})
+		return
+	}
+	res, err := n.Search(q, 50)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	if res == nil {
+		res = []store.SearchResult{}
+	}
+	writeJSON(w, 200, res)
 }
 
 func (s *Server) acceptRoom(w http.ResponseWriter, r *http.Request, n *node.Node) {

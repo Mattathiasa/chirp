@@ -68,8 +68,9 @@ const enc = encodeURIComponent;
 // ---------- state ----------
 const S = {
   setup: null, me: null, peers: [], rooms: [], cur: null, roomCur: null, msgs: [], view: 'chat', panel: false,
-  settings: { retentionDays: 0, notify: true, previews: false },
+  settings: { retentionDays: 0, notify: true, previews: false, typing: false, receipts: false },
   outbox: [], diag: null, q: '', connected: true, unread: {}, modal: null, draft: {}, typing: {},
+  reactions: {}, readUpTo: {}, replyTo: null, sentRead: {},
 };
 const peerByName = (n) => S.peers.find((p) => p.name.toLowerCase() === (n || '').toLowerCase());
 const curPeer = () => peerByName(S.cur);
@@ -205,6 +206,20 @@ function connectEvents() {
       }
       if (S.view !== 'chat') { if (S.view === 'network') refreshNetworkSoon(); }
     }
+    if (e.type === 'reaction' && e.target) {
+      (S.reactions[e.target] = S.reactions[e.target] || []).push(e.emoji);
+      if (S.cur && e.peer && e.peer.toLowerCase() === S.cur.toLowerCase()) renderMain(true);
+    }
+    if (e.type === 'typing' && e.peer) {
+      const k = e.peer.toLowerCase();
+      clearTimeout(S.typing[k]);
+      S.typing[k] = setTimeout(() => { delete S.typing[k]; renderMain(true); }, 4000);
+      if (S.cur && k === S.cur.toLowerCase()) renderMain(true);
+    }
+    if (e.type === 'read' && e.peer && e.target) {
+      S.readUpTo[e.peer.toLowerCase()] = e.target;
+      if (S.cur && e.peer.toLowerCase() === S.cur.toLowerCase()) renderMain(true);
+    }
     if (e.type === 'roomMessage' && e.roomMessage) {
       const m = e.roomMessage;
       if (S.roomCur && e.room === S.roomCur) {
@@ -252,7 +267,7 @@ function buildComposer() {
   $ta = h('textarea', { rows: 1, 'aria-label': 'Message', placeholder: 'Message', maxlength: 4000 });
   $sendBtn = h('button', { class: 'send', 'aria-label': 'Send message', type: 'button' }, icon('send', 22));
   const grow = () => { $ta.style.height = 'auto'; $ta.style.height = Math.min($ta.scrollHeight, 140) + 'px'; };
-  $ta.addEventListener('input', () => { grow(); if (S.cur) S.draft[S.cur] = $ta.value; else if (S.roomCur) S.draft['r:' + S.roomCur] = $ta.value; syncSend(); });
+  $ta.addEventListener('input', () => { grow(); if (S.cur) { S.draft[S.cur] = $ta.value; maybeSendTyping(); } else if (S.roomCur) S.draft['r:' + S.roomCur] = $ta.value; syncSend(); });
   $ta.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); sendCurrent(); } });
   $sendBtn.addEventListener('click', sendCurrent);
   composer = h('div', { class: 'composer' }, $ta, $sendBtn);
@@ -262,12 +277,33 @@ function syncSend() { $sendBtn.disabled = $ta.disabled || !$ta.value.trim(); }
 async function sendMsg() {
   const body = $ta.value.trim();
   if (!body || !S.cur || $ta.disabled) return;
-  $ta.value = ''; S.draft[S.cur] = ''; $ta.style.height = 'auto'; syncSend();
+  const replyTo = S.replyTo ? S.replyTo.id : undefined;
+  $ta.value = ''; S.draft[S.cur] = ''; S.replyTo = null; $ta.style.height = 'auto'; syncSend();
   try {
-    const m = await (await api('POST', `/api/peers/${enc(S.cur)}/messages`, { body })).json();
+    const m = await (await api('POST', `/api/peers/${enc(S.cur)}/messages`, { body, replyTo })).json();
     if (!S.msgs.find((x) => x.id === m.id)) S.msgs.push(m);
     renderMain(true);
   } catch (e) { $ta.value = body; syncSend(); toast(e.message, true); }
+}
+
+// Typing is off unless the privacy setting is on, and is rate limited so a
+// fast typist does not emit one envelope per keystroke.
+let typingSent = 0;
+function maybeSendTyping() {
+  if (!S.settings.typing || !S.cur) return;
+  const now = Date.now();
+  if (now - typingSent < 2500) return;
+  typingSent = now;
+  api('POST', `/api/peers/${enc(S.cur)}/typing`).catch(() => { /* best effort */ });
+}
+
+// Read receipts are opt-in and only sent for the conversation on screen.
+function maybeSendReadReceipt() {
+  if (!S.settings.receipts || !S.cur || document.hidden) return;
+  const last = [...S.msgs].reverse().find((m) => m.dir === 'in');
+  if (!last || S.sentRead[last.id]) return;
+  S.sentRead[last.id] = true;
+  api('POST', `/api/peers/${enc(S.cur)}/read`, { target: last.id }).catch(() => { /* best effort */ });
 }
 async function sendRoomMsg() {
   const body = $ta.value.trim();
@@ -609,7 +645,7 @@ async function setView(v) {
   renderSide(); renderMain(); renderPanel();
 }
 async function openPeer(name) {
-  S.cur = name; S.view = 'chat'; S.roomCur = null; S.unread[name.toLowerCase()] = 0; S.msgs = [];
+  S.cur = name; S.view = 'chat'; S.roomCur = null; S.replyTo = null; S.unread[name.toLowerCase()] = 0; S.msgs = [];
   $ta.value = S.draft[name] || '';
   renderSide(); renderMain(); renderPanel();
   await loadMessages();
@@ -673,12 +709,23 @@ function renderMain(keepScroll) {
     S.msgs.length === 0 && p.trust !== 'unknown' ? h('div', { class: 'notice' }, 'No messages yet. Say hello.') : null,
     ...S.msgs.map((m) => msgEl(m, p)));
 
+  if (S.typing[p.name.toLowerCase()]) {
+    list.append(h('div', { class: 'm them' }, h('div', { class: 'bubble typing' },
+      h('i', {}), h('i', {}), h('i', {}), h('span', { class: 'sr' }, `${p.name} is typing`))));
+  }
+
+  const replyStrip = S.replyTo ? h('div', { class: 'replying' },
+    icon('back', 16),
+    h('div', { class: 'grow' }, h('b', {}, 'Replying to'), ' ', S.replyTo.body),
+    h('button', { class: 'iconbtn sm', 'aria-label': 'Cancel reply', onclick: () => { S.replyTo = null; renderMain(true); } }, icon('x', 16))) : null;
+
   const locked = p.trust === 'changed' || p.trust === 'unknown';
   $ta.disabled = locked;
   $ta.placeholder = p.trust === 'changed' ? 'Review the changed key to continue' : p.trust === 'unknown' ? 'Establishing a secure session…' : p.online ? 'Message' : `Message ${p.name} (queued until they are back)`;
   $ta.value = $ta.value; syncSend();
 
-  $main.replaceChildren(...[banner, head, notice, list, composer].filter(Boolean));
+  $main.replaceChildren(...[banner, head, notice, list, replyStrip, composer].filter(Boolean));
+  maybeSendReadReceipt();
   const l = $main.querySelector('.msgs');
   if (l && (atBottom || !keepScroll)) l.scrollTop = l.scrollHeight; else if (l && prev) l.scrollTop = prev.scrollTop;
 }
@@ -687,10 +734,83 @@ function msgEl(m, p) {
   const mine = m.dir === 'out';
   let st = null;
   if (mine) {
-    if (m.status === 'delivered') st = h('div', { class: 'stat ok' }, icon('checks', 16), `${fmtTime(m.ts)} · Delivered`);
+    if (S.readUpTo[p.name.toLowerCase()] === m.id) st = h('div', { class: 'stat ok' }, icon('checks', 16), `${fmtTime(m.ts)} · Read`);
+    else if (m.status === 'delivered') st = h('div', { class: 'stat ok' }, icon('checks', 16), `${fmtTime(m.ts)} · Delivered`);
     else st = h('div', { class: 'stat q', title: `Attempts: ${m.attempts}` }, icon('clock', 13), p.online ? 'Sending…' : `Queued · sends when ${p.name} is back`);
   } else st = h('div', { class: 'stat' }, fmtTime(m.ts));
-  return h('div', { class: 'm ' + (mine ? 'me' : 'them') }, h('div', { class: 'bubble' }, m.body), st);
+
+  // A quoted message shows the line it answers, looked up locally.
+  let quote = null;
+  if (m.replyTo) {
+    const q = S.msgs.find((x) => x.id === m.replyTo);
+    quote = h('div', { class: 'quote' }, q ? q.body : 'Message no longer here');
+  }
+
+  const chips = (S.reactions[m.id] || []).length
+    ? h('div', { class: 'reacts' }, ...[...new Set(S.reactions[m.id])].map((emoji) =>
+      h('span', { class: 'react' }, emoji, h('span', {}, S.reactions[m.id].filter((x) => x === emoji).length))))
+    : null;
+
+  const el = h('div', { class: 'm ' + (mine ? 'me' : 'them') },
+    h('div', { class: 'bubble' }, quote, h('span', {}, m.body)),
+    chips, st,
+    h('div', { class: 'acts' },
+      h('button', { class: 'act', 'aria-label': 'Reply', title: 'Reply', onclick: () => startReply(m) }, icon('back', 15)),
+      h('button', { class: 'act', 'aria-label': 'React', title: 'React', onclick: () => showPeerReactionPicker(m.id) }, icon('plus', 15)),
+      h('button', { class: 'act', 'aria-label': 'Copy', title: 'Copy', onclick: async () => {
+        try { await navigator.clipboard.writeText(m.body); toast('Copied'); } catch { toast('Copy failed', true); }
+      } }, icon('file', 15)),
+      h('button', { class: 'act red', 'aria-label': 'Delete', title: 'Delete', onclick: () => showDeleteMessage(m, p, mine) }, icon('trash', 15))));
+  return el;
+}
+
+function startReply(m) {
+  S.replyTo = m;
+  renderMain(true);
+  $ta.focus();
+}
+
+function showPeerReactionPicker(msgID) {
+  modal((box, close) => {
+    box.append(
+      h('div', { style: 'display:flex;justify-content:space-between;align-items:center' }, h('h1', {}, 'React'),
+        h('button', { class: 'iconbtn', 'aria-label': 'Close', onclick: close }, icon('x', 20))),
+      h('p', { class: 'muted', style: 'font-size:13px' }, 'Reactions in a one-to-one chat are not stored. They are shown to whoever is looking at the conversation now.'),
+      h('div', { class: 'picker' }, ...REACTIONS.map((emoji) =>
+        h('button', { class: 'react', 'aria-label': `React with ${emoji}`, onclick: async () => {
+          close();
+          try {
+            await api('POST', `/api/peers/${enc(S.cur)}/react`, { emoji, target: msgID });
+            (S.reactions[msgID] = S.reactions[msgID] || []).push(emoji);
+            renderMain(true);
+          } catch (e) { toast(e.message, true); }
+        } }, emoji))));
+  });
+}
+
+function showDeleteMessage(m, p, mine) {
+  modal((box, close) => {
+    const kids = [
+      h('div', { style: 'display:flex;justify-content:space-between;align-items:center' }, h('h1', {}, 'Delete message'),
+        h('button', { class: 'iconbtn', 'aria-label': 'Close', onclick: close }, icon('x', 20))),
+      h('div', { class: 'card', style: 'box-shadow:none' }, m.body),
+      h('button', { class: 'btn danger block', onclick: async () => {
+        close();
+        try { await api('DELETE', `/api/messages/${enc(m.id)}`); S.msgs = S.msgs.filter((x) => x.id !== m.id); renderMain(true); }
+        catch (e) { toast(e.message, true); }
+      } }, 'Delete for me'),
+    ];
+    if (mine) {
+      kids.push(
+        h('button', { class: 'btn danger block', onclick: async () => {
+          close();
+          try { await api('DELETE', `/api/messages/${enc(m.id)}?everyone=1&peer=${enc(p.name)}`); S.msgs = S.msgs.filter((x) => x.id !== m.id); renderMain(true); }
+          catch (e) { toast(e.message, true); }
+        } }, `Delete for me and ${p.name}`),
+        h('p', { class: 'muted', style: 'font-size:13px' }, `Deleting for ${p.name} is a request, not a guarantee. They may be offline, running something else, or have already read it.`));
+    }
+    box.append(...kids);
+  });
 }
 
 // ---------- trust panel ----------
@@ -829,7 +949,9 @@ function viewSettings() {
     h('div', { style: 'display:flex;gap:8px;align-items:center' }, back, h('h1', {}, 'Settings')),
     h('div', { class: 'card', style: 'padding:6px 18px' },
       sw('Browser notifications', 'A quiet alert when this tab is in the background.', 'notify', async (on) => { if (on && 'Notification' in window && Notification.permission === 'default') await Notification.requestPermission(); }),
-      sw('Show message text', 'Off: notifications and the people list say "New message".', 'previews')),
+      sw('Show message text', 'Off: notifications and the people list say "New message".', 'previews'),
+      sw('Tell people when you are typing', 'Off by default. Sent only while a chat is open, and never stored by either side.', 'typing'),
+      sw('Send read receipts', 'Off by default. Tells the sender you have seen their latest message. Turning it off does not stop you seeing theirs.', 'receipts')),
     h('div', { class: 'card' }, h('h3', { class: 'sec' }, 'Keep messages for'),
       h('p', { class: 'muted', style: 'font-size:13px;margin-bottom:10px' }, 'Older delivered messages are deleted from this device. Unsent messages are never deleted. Others keep their own copy.'),
       h('div', { class: 'seg' }, opts.map(([v, l]) => h('button', { 'aria-pressed': String(st.retentionDays === v), onclick: () => save({ retentionDays: v }) }, l)))),

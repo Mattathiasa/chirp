@@ -240,6 +240,11 @@ func (n *Node) SendReaction(peer, emoji, targetID string) error {
 
 // SendTyping sends a typing indicator (ephemeral, not persisted).
 func (n *Node) SendTyping(peer string) error {
+	// Typing is a privacy setting, off by default. Enforce it here rather than
+	// only in the UI, so the local API cannot be used to leak it either way.
+	if st, err := n.cfg.Store.Settings(); err != nil || !st.Typing {
+		return nil
+	}
 	l := n.linkFor(peer)
 	if l == nil {
 		return ErrUnknownPeer
@@ -249,6 +254,10 @@ func (n *Node) SendTyping(peer string) error {
 
 // SendReadReceipt sends a read receipt for a message.
 func (n *Node) SendReadReceipt(peer, targetID string) error {
+	// Read receipts are opt-in, for the same reason as typing.
+	if st, err := n.cfg.Store.Settings(); err != nil || !st.Receipts {
+		return nil
+	}
 	l := n.linkFor(peer)
 	if l == nil {
 		return ErrUnknownPeer
