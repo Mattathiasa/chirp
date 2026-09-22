@@ -342,6 +342,24 @@ p { margin: 0; }
   .acts { transition: none; }
 }
 
+/* ---------- command palette ---------- */
+.modal.palette { padding: 0; overflow: hidden; max-width: 620px; width: 100%; }
+.pal-head { display: flex; align-items: center; gap: 12px; padding: 16px 18px; border-bottom: 2px solid var(--ink); color: var(--mute); }
+.pal-head .in { height: 40px; padding: 0; border: 0; background: transparent; font-size: 18px; }
+.pal-head .in:focus { outline: 0; box-shadow: none; }
+.pal-results { max-height: 52vh; overflow: auto; padding: 8px; }
+.pal-row { display: flex; align-items: center; gap: 12px; width: 100%; padding: 10px 12px; border: 2px solid transparent; border-radius: 15px; background: transparent; text-align: left; }
+.pal-row.on { background: var(--paper2); border-color: var(--ink); }
+.pal-ic { display: grid; place-items: center; width: 34px; height: 34px; flex: none; border-radius: 11px; background: var(--ink); color: var(--butter); }
+.pal-row .grow { flex: 1; min-width: 0; }
+.pal-t { display: block; font: 800 16px var(--display); letter-spacing: -.02em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pal-s { display: block; font: 500 12px var(--mono); color: var(--mute); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pal-k { flex: none; font: 700 10px var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--mute); }
+.pal-empty { padding: 30px; text-align: center; color: var(--mute); }
+.pal-hint { display: flex; align-items: center; gap: 6px; padding: 10px 18px; border-top: 2px solid var(--rule); font: 500 12px var(--mono); color: var(--mute); }
+.pal-hint kbd { display: inline-grid; place-items: center; min-width: 20px; height: 20px; padding: 0 5px; border: 1px solid var(--rule); border-radius: 6px; background: var(--white); font: inherit; }
+
+
 
 
 

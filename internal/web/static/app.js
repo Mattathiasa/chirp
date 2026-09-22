@@ -139,16 +139,35 @@ function toast(msg, bad = false) {
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => t.remove(), 3500);
 }
+const FOCUSABLE = 'a[href],button:not([disabled]),input:not([disabled]),textarea:not([disabled]),select:not([disabled]),[tabindex]:not([tabindex="-1"])';
+
 function modal(build) {
+  const returnTo = document.activeElement;
   const bg = h('div', { class: 'modal-bg', onclick: (e) => { if (e.target === bg) close(); } });
-  const close = () => { bg.remove(); document.removeEventListener('keydown', esc); };
-  const esc = (e) => { if (e.key === 'Escape') close(); };
-  document.addEventListener('keydown', esc);
+  const close = () => {
+    bg.remove();
+    document.removeEventListener('keydown', keys, true);
+    // Put focus back where it was, so keyboard users are not dumped at the
+    // top of the document every time a dialog closes.
+    if (returnTo && document.contains(returnTo)) returnTo.focus();
+  };
+  const keys = (e) => {
+    if (e.key === 'Escape') { e.stopPropagation(); close(); return; }
+    if (e.key !== 'Tab') return;
+    // Keep Tab inside the dialog while it is open.
+    const items = [...box.querySelectorAll(FOCUSABLE)].filter((el) => el.offsetParent !== null || el === document.activeElement);
+    if (!items.length) return;
+    const first = items[0];
+    const last = items[items.length - 1];
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+  };
+  document.addEventListener('keydown', keys, true);
   const box = h('div', { class: 'modal', role: 'dialog', 'aria-modal': 'true' });
   build(box, close);
   bg.append(box);
   document.body.append(bg);
-  box.querySelector('input,button,textarea')?.focus();
+  box.querySelector(FOCUSABLE)?.focus();
 }
 function confirmBox(title, body, action, okLabel = 'Confirm', danger = true) {
   modal((box, close) => {
@@ -553,6 +572,7 @@ function renderNav() {
     S.me ? h('div', { class: 'prof' },
       avatar({ name: S.me.name, identicon: S.me.identicon }, 44, false),
       h('button', { class: 'pname', onclick: showIdentity, 'aria-label': 'My identity' }, h('b', {}, S.me.name), h('small', {}, S.me.fp.slice(0, 8) + ' … ' + S.me.fp.slice(-4))),
+      h('button', { class: 'iconbtn sm', 'aria-label': 'Search everything', title: 'Search everything (Ctrl+K)', onclick: openPalette }, icon('search', 18)),
       h('button', { class: 'iconbtn sm', 'aria-label': 'Settings', onclick: () => setView('settings') }, icon('gear', 18))) : null,
     h('div', { class: 'nlist' },
       item('people', 'Chats', S.view === 'chat', () => setView('chat'), un || null),
@@ -900,6 +920,108 @@ function showAddMember(r, addable) {
           h('div', { class: 'n' }, p.trust === 'verified' ? 'Verified' : 'Not verified yet'))))));
   });
 }
+
+// ---------- command palette ----------
+// Cmd/Ctrl+K over people, rooms and message text. Message search runs on the
+// daemon against decrypted bodies; people and rooms are matched from state we
+// already hold, so the list is useful before the first keystroke lands.
+let palSearchTimer;
+
+function openPalette() {
+  if (document.querySelector('.modal-bg .palette')) return;
+  modal((box, close) => {
+    box.classList.add('palette');
+    let results = [];
+    let active = 0;
+
+    const input = h('input', { class: 'in', placeholder: 'Search people, rooms and messages…', 'aria-label': 'Search', autocomplete: 'off', role: 'combobox', 'aria-expanded': 'true', 'aria-controls': 'pal-results' });
+    const list = h('div', { class: 'pal-results', id: 'pal-results', role: 'listbox' });
+    const hint = h('div', { class: 'pal-hint' }, h('kbd', {}, '\u2191'), h('kbd', {}, '\u2193'), 'to move', h('kbd', {}, 'Enter'), 'to open', h('kbd', {}, 'Esc'), 'to close');
+
+    const go = (r) => { close(); r.go(); };
+
+    const draw = () => {
+      list.replaceChildren(...(results.length
+        ? results.map((r, i) => h('button', {
+            class: 'pal-row' + (i === active ? ' on' : ''),
+            role: 'option',
+            'aria-selected': String(i === active),
+            onmousemove: () => { if (active !== i) { active = i; draw(); } },
+            onclick: () => go(r),
+          },
+          h('span', { class: 'pal-ic' }, icon(r.icon, 18)),
+          h('span', { class: 'grow' }, h('span', { class: 'pal-t' }, r.title), h('span', { class: 'pal-s' }, r.sub)),
+          h('span', { class: 'pal-k' }, r.kind)))
+        : [h('div', { class: 'pal-empty' }, input.value.trim() ? `Nothing matches "${input.value.trim()}".` : 'Start typing.')]));
+      list.querySelector('.pal-row.on')?.scrollIntoView({ block: 'nearest' });
+    };
+
+    const collect = async () => {
+      const q = input.value.trim().toLowerCase();
+      const out = [];
+      for (const p of S.peers) {
+        if (q && !p.name.toLowerCase().includes(q)) continue;
+        out.push({ kind: 'Person', icon: 'people', title: p.name,
+          sub: p.online ? 'Online' : p.nearby ? 'Nearby' : 'Offline',
+          go: () => openPeer(p.name) });
+      }
+      for (const r of joinedRooms()) {
+        if (q && !r.name.toLowerCase().includes(q)) continue;
+        out.push({ kind: 'Room', icon: 'users', title: r.name,
+          sub: `${r.members.length} members`, go: () => openRoom(r.id) });
+      }
+      for (const r of invites()) {
+        if (q && !r.name.toLowerCase().includes(q)) continue;
+        out.push({ kind: 'Invite', icon: 'users', title: r.name,
+          sub: `${r.createdBy} invited you`, go: () => setView('rooms') });
+      }
+      if (q.length >= 2) {
+        try {
+          const hits = await getJSON(`/api/search?q=${enc(input.value.trim())}`);
+          for (const hit of hits.slice(0, 20)) {
+            const m = hit.message;
+            out.push({ kind: 'Message', icon: 'search', title: hit.snippet || m.body,
+              sub: `${m.dir === 'out' ? 'You' : m.peer} \u00b7 ${fmtTime(m.ts)}`,
+              go: () => openPeer(m.peer) });
+          }
+        } catch { /* the daemon may be momentarily unreachable */ }
+      }
+      results = out;
+      if (active >= results.length) active = 0;
+      draw();
+    };
+
+    input.addEventListener('input', () => { clearTimeout(palSearchTimer); palSearchTimer = setTimeout(collect, 120); });
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowDown') { e.preventDefault(); active = Math.min(active + 1, results.length - 1); draw(); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); active = Math.max(active - 1, 0); draw(); }
+      else if (e.key === 'Enter') { e.preventDefault(); if (results[active]) go(results[active]); }
+      else if (e.key === 'Home') { e.preventDefault(); active = 0; draw(); }
+      else if (e.key === 'End') { e.preventDefault(); active = results.length - 1; draw(); }
+    });
+
+    box.append(
+      h('div', { class: 'pal-head' }, icon('search', 20), input),
+      list, hint);
+    collect();
+  });
+}
+
+// Global keys. Anything typed into a field is left alone.
+function inField(t) {
+  return t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable);
+}
+document.addEventListener('keydown', (e) => {
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+    e.preventDefault();
+    openPalette();
+    return;
+  }
+  if (e.key === '/' && !inField(e.target) && !e.metaKey && !e.ctrlKey && !e.altKey) {
+    e.preventDefault();
+    openPalette();
+  }
+});
 
 // ---------- identity dialog ----------
 function showIdentity() {
