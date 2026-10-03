@@ -292,6 +292,37 @@ func TestManyMessagesInOrder(t *testing.T) {
 	}
 }
 
+// The backoff that spaces out retries must not be deterministic, or every
+// node that reboots together (power cut, access point restart) retries on
+// exactly the same schedule forever. Full jitter keeps the same ceiling but
+// spreads the retries across it.
+func TestJitteredBackoffStaysWithinTheCeilingAndVaries(t *testing.T) {
+	const base, max = 100 * time.Millisecond, time.Second
+	det := backoff(3, base, max)
+	seen := map[time.Duration]bool{}
+	for i := 0; i < 200; i++ {
+		d := jitteredBackoff(3, base, max)
+		if d <= 0 || d > det {
+			t.Fatalf("jittered backoff %v outside (0, %v]", d, det)
+		}
+		seen[d] = true
+	}
+	// 200 draws over a range of at least 100 distinct nanosecond values must
+	// not all land on one. This is not a proof of uniformity, just a tripwire
+	// against a regression to the deterministic value.
+	if len(seen) < 10 {
+		t.Fatalf("200 draws produced only %d distinct values: jitter is not applied", len(seen))
+	}
+	// The deterministic backoff is untouched.
+	if backoff(1, base, max) != base || backoff(2, base, max) != 2*base {
+		t.Fatal("deterministic backoff changed")
+	}
+	// Out-of-range attempts still clamp to max.
+	if d := jitteredBackoff(99, base, max); d <= 0 || d > max {
+		t.Fatalf("clamped backoff %v outside (0, %v]", d, max)
+	}
+}
+
 // Reconnecting many times must not leave goroutines behind.
 func TestNoGoroutineLeakAcrossReconnects(t *testing.T) {
 	hub := discovery.NewHub()

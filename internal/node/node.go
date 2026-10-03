@@ -12,6 +12,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -330,7 +331,7 @@ func (n *Node) dialDone(nb *nearby, ok bool) {
 		return
 	}
 	nb.fails++
-	nb.nextDial = time.Now().Add(backoff(nb.fails, time.Second, 30*time.Second))
+	nb.nextDial = time.Now().Add(jitteredBackoff(nb.fails, time.Second, 30*time.Second))
 }
 
 func backoff(attempt int, base, max time.Duration) time.Duration {
@@ -342,6 +343,25 @@ func backoff(attempt int, base, max time.Duration) time.Duration {
 		return max
 	}
 	return d
+}
+
+// jitteredBackoff adds full jitter to the deterministic backoff: the retry
+// lands uniformly in [1, backoff]. A deterministic backoff makes every node
+// that restarted together (a power cut, a Wi-Fi access point reboot) retry on
+// exactly the same schedule forever, which is the thundering-herd pattern.
+// The deterministic value stays available to tests and bounds the jitter.
+func jitteredBackoff(attempt int, base, max time.Duration) time.Duration {
+	d := backoff(attempt, base, max)
+	if d <= 0 {
+		return d
+	}
+	var b [8]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return d // a broken RNG should not stop delivery entirely
+	}
+	n := binary.BigEndian.Uint64(b[:])
+	// Uniform in [1, d]; never 0 so the tick is never immediate.
+	return time.Duration(1 + n%uint64(d))
 }
 
 // ---- session lifecycle ----
@@ -474,7 +494,7 @@ func (n *Node) flush(peer string, force bool) {
 	}
 	now := time.Now()
 	for _, m := range pend {
-		if !force && m.Attempts > 0 && now.Sub(m.LastTry) < backoff(m.Attempts, n.cfg.RetryBase, n.cfg.RetryMax) {
+		if !force && m.Attempts > 0 && now.Sub(m.LastTry) < jitteredBackoff(m.Attempts, n.cfg.RetryBase, n.cfg.RetryMax) {
 			continue
 		}
 		m2, err := n.cfg.Store.RecordAttempt(m.ID, now)
