@@ -76,7 +76,7 @@ Read these before you rely on it for anything.
 
 * **First contact is trust-on-first-use.** Someone present when you first meet a name can impersonate it. Verify in person.
 * **The six words are a convenience, not a proof.** They are 48 bits derived from one public key. Compare the full fingerprint for anything that matters.
-* **The name is the identity handle.** Two people who pick the same name collide and one shows up as a key change. There is no rename yet.
+* **The name is the identity handle.** Two people who pick the same name collide and one shows up as a key change. You can rename yourself from Settings; the new name is re-announced on the LAN at once.
 * **Encryption at rest protects a stolen disk, not a stolen session.** Message bodies, pinned peers, room names and received files are encrypted with a key derived from your identity key, which sits in the same data directory at mode `0600`. So a copied database or an unencrypted backup yields nothing, but anyone who can read your user account's files can derive the key and read everything. It is not a passphrase.
 * **Not audited.** It uses well-known primitives (`flynn/noise`, `x/crypto`) in a standard pattern, but the composition is mine and has had no outside review.
 * **Some networks will not work.** Guest Wi-Fi with client isolation, VLAN splits and firewalls that drop UDP 5353 or the chosen TCP port all prevent discovery or connection. The Network screen lists the usual causes.

@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Mattathiasa/chirp/internal/discovery"
 	"github.com/Mattathiasa/chirp/internal/identity"
 	"github.com/Mattathiasa/chirp/internal/proto"
 	"github.com/Mattathiasa/chirp/internal/store"
@@ -167,8 +168,9 @@ func (n *Node) Forget(name string) error {
 	return nil
 }
 
-// Rename changes the display name. The key stays the same; peers see the new
-// name on the next handshake.
+// Rename changes the display name. The key stays the same. It re-announces
+// immediately, because the name travels in the mDNS TXT record: without a
+// fresh Announce, peers keep seeing the old name until we happen to restart.
 func (n *Node) Rename(name string) error {
 	name, err := identity.ValidateName(name)
 	if err != nil {
@@ -180,6 +182,14 @@ func (n *Node) Rename(name string) error {
 	n.mu.Lock()
 	n.id.Name = name
 	n.mu.Unlock()
+	// Best effort: if the announcer is gone (shutdown, discovery failure) the
+	// rename still stands locally and the new name rides the next handshake.
+	ctx := n.currentAnnounceCtx()
+	if ctx != nil {
+		if err := n.cfg.Disc.Announce(ctx, discovery.Announcement{Name: n.id.Name, FP: n.myFP, Port: n.Port()}); err != nil {
+			n.logf("re-announce after rename: %v", err)
+		}
+	}
 	n.emit(Event{Type: "me"})
 	return nil
 }

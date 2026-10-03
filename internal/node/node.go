@@ -92,6 +92,12 @@ type Node struct {
 	wg     sync.WaitGroup
 	hsSem  chan struct{} // bounds concurrent unauthenticated handshakes
 
+	// announceCtx is the context the current announcement lives under. A
+	// rename re-announces under it; it is nil before Start and after Stop.
+	muAnnounce   sync.Mutex
+	announceCtx  context.Context
+	announceStop context.CancelFunc
+
 	mu      sync.Mutex
 	nearby  map[string]*nearby // by advertised fingerprint
 	live    map[string]*link   // by lower-cased peer name
@@ -135,15 +141,23 @@ func (n *Node) Start(ctx context.Context) error {
 	n.started = time.Now()
 	ctx, n.cancel = context.WithCancel(ctx)
 
+	// The announcement gets its own cancel so a rename can retire the old one
+	// and publish the new name without tearing down the whole node.
+	actx, astop := context.WithCancel(ctx)
 	events, err := n.cfg.Disc.Browse(ctx)
 	if err != nil {
+		astop()
 		ln.Close()
 		return err
 	}
-	if err := n.cfg.Disc.Announce(ctx, discovery.Announcement{Name: n.id.Name, FP: n.myFP, Port: n.Port()}); err != nil {
+	if err := n.cfg.Disc.Announce(actx, discovery.Announcement{Name: n.id.Name, FP: n.myFP, Port: n.Port()}); err != nil {
+		astop()
 		ln.Close()
 		return err
 	}
+	n.muAnnounce.Lock()
+	n.announceCtx, n.announceStop = actx, astop
+	n.muAnnounce.Unlock()
 	n.logf("listening on %s, announcing as %q (%s…)", ln.Addr(), n.id.Name, n.myFP[:8])
 
 	n.goRun(func() { n.acceptLoop(ctx) })
@@ -162,12 +176,26 @@ func (n *Node) Stop() {
 	if n.ln != nil {
 		n.ln.Close()
 	}
+	n.muAnnounce.Lock()
+	if n.announceStop != nil {
+		n.announceStop()
+		n.announceCtx, n.announceStop = nil, nil
+	}
+	n.muAnnounce.Unlock()
 	n.mu.Lock()
 	for _, l := range n.live {
 		l.conn.Close()
 	}
 	n.mu.Unlock()
 	n.wg.Wait()
+}
+
+// announceCtx returns the context the current announcement is published under,
+// or nil outside Start..Stop. Callers must not cancel it.
+func (n *Node) currentAnnounceCtx() context.Context {
+	n.muAnnounce.Lock()
+	defer n.muAnnounce.Unlock()
+	return n.announceCtx
 }
 
 func (n *Node) goRun(f func()) {
