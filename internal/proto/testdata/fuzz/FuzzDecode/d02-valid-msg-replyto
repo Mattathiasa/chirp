@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("{\"t\":\"msg\",\"id\":\"0123456789abcdef0123456789abcdef\",\"body\":\"a reply\",\"replyTo\":\"fedcba9876543210fedcba9876543210\"}")

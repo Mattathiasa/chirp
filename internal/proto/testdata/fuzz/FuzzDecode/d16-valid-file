@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("{\"t\":\"file\",\"id\":\"0123456789abcdef0123456789abcdef\",\"src\":\"notes.txt\",\"size\":12,\"hash\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}")

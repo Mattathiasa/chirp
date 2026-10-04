@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("{\"t\":\"roomevent\",\"room\":\"11111111111111111111111111111111\",\"roomEvent\":\"create\",\"roomActor\":\"Alex\",\"roomMembers\":[\"Alex\",\"Sam\"]}")

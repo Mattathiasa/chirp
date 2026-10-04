@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("{\"t\":\"chunk\",\"id\":\"0123456789abcdef0123456789abcdef\",\"offset\":0,\"chunk\":\"aGVsbG8=\"}")

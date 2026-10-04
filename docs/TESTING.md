@@ -11,6 +11,13 @@ make vuln          # govulncheck
 
 CI runs all of the above plus a cross-platform build matrix.
 
+Both wire-format fuzz targets (`FuzzDecode`, `FuzzReadFrame`) carry a checked-in
+seed corpus in `internal/proto/testdata/fuzz/`, so every ordinary `go test`
+run replays the interesting inputs: every envelope type at its size limits,
+rejected shapes, invalid UTF-8, trailing data, and the frame-length edge
+cases. Any failure the fuzzer finds is written to the same directory — commit
+that file so the regression can never come back.
+
 ## Two-process loopback test
 
 Two chirpd instances on the same machine, different data dirs and HTTP ports, over loopback.
