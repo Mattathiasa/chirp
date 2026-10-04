@@ -10,12 +10,14 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/Mattathiasa/chirp/internal/app"
 	"github.com/Mattathiasa/chirp/internal/discovery"
+	"github.com/Mattathiasa/chirp/internal/identity"
 	"github.com/Mattathiasa/chirp/internal/node"
 )
 
@@ -492,4 +494,43 @@ func TestUnlockFlow(t *testing.T) {
 		t.Fatalf("state after unlock: %d %s", r.StatusCode, b)
 	}
 	locked.Close()
+}
+
+// An explicit dial can pin an expected fingerprint: a mismatch is refused
+// with 403 and trusts nothing, the right one connects.
+func TestDialFingerprintCheck(t *testing.T) {
+	hub := discovery.NewHub()
+	ca := newApp(t, hub)
+	cb := newApp(t, hub)
+	c := newClient(t, ca)
+	c2 := newClient(t, cb)
+	c.do("POST", "/api/setup", map[string]string{"name": "Alice"}, nil)
+	c2.do("POST", "/api/setup", map[string]string{"name": "Bob"}, nil)
+
+	port := strconv.Itoa(cb.Node().Port())
+	good := identity.Fingerprint(cb.Node().Identity().Key.Public)
+	eve, _ := identity.Generate("Eve")
+
+	r, _ := c.do("POST", "/api/dial", map[string]string{"host": "127.0.0.1", "port": port, "fingerprint": identity.Fingerprint(eve.Key.Public)}, nil)
+	if r.StatusCode != 403 {
+		t.Fatalf("wrong fingerprint: %d", r.StatusCode)
+	}
+	if _, err := ca.St.GetPeer("Bob"); err == nil {
+		t.Fatal("the impostor was pinned despite the fingerprint check")
+	}
+
+	r, b := c.do("POST", "/api/dial", map[string]string{"host": "127.0.0.1", "port": port, "fingerprint": good}, nil)
+	if r.StatusCode != 200 {
+		t.Fatalf("good fingerprint: %d %s", r.StatusCode, b)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		if _, err := ca.St.GetPeer("Bob"); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("bob was not pinned after a good-fingerprint dial")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 }

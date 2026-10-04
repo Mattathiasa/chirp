@@ -260,5 +260,5 @@ Examples:
 
 ### API
 
-- `POST /api/dial` with `{"host":"...","port":"..."}`: connects to a peer at the given address
+- `POST /api/dial` with `{"host":"...","port":"...","fingerprint":"..."}`: connects to a peer at the given address. `fingerprint` is optional; when present it is the remote's full 64-hex fingerprint (grouped or raw, any spacing), checked during the handshake so a dial to a wrong address cannot get an impostor pinned on first contact. A mismatch answers 403 and pins nothing.
 - `POST /api/invite/parse` with `{"uri":"..."}`: validates and parses an invite URI

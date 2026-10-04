@@ -20,6 +20,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/Mattathiasa/chirp/internal/discovery"
@@ -228,7 +229,7 @@ func (n *Node) acceptLoop(ctx context.Context) {
 			continue
 		}
 		n.goRun(func() {
-			n.serve(ctx, c, false, func() { <-n.hsSem })
+			n.serve(ctx, c, false, func() { <-n.hsSem }, "")
 		})
 	}
 }
@@ -317,7 +318,7 @@ func (n *Node) dial(ctx context.Context, nb *nearby) {
 		n.logf("dial %q failed: %v", p.Name, err)
 		return
 	}
-	established := n.serve(ctx, conn, true, nil)
+	established := n.serve(ctx, conn, true, nil, "") == nil
 	n.dialDone(nb, established)
 }
 
@@ -368,7 +369,31 @@ func jitteredBackoff(attempt int, base, max time.Duration) time.Duration {
 
 // serve runs one connection from handshake to close. It reports whether a
 // session was established (handshake ok and key acceptable).
-func (n *Node) serve(ctx context.Context, c net.Conn, initiator bool, hsDone func()) (established bool) {
+// ErrFPMismatch is returned by Dial when the remote presented a key that
+// does not match the fingerprint the caller expected. The peer is not pinned
+// and the connection is dropped.
+var ErrFPMismatch = errors.New("node: fingerprint mismatch")
+
+// fpMatches reports whether a user-supplied fingerprint names the remote's
+// key. It accepts the raw hex form or the grouped display form, in any case,
+// with spaces, dashes or colons between groups. Only the full 64-hex
+// fingerprint qualifies: the six words are 48 bits and are not a proof.
+func fpMatches(want string, remoteKey []byte) bool {
+	var b strings.Builder
+	for _, r := range want {
+		switch r {
+		case ' ', '\t', ':', '-', '\u00a0':
+		default:
+			b.WriteRune(unicode.ToLower(r))
+		}
+	}
+	return b.String() == identity.Fingerprint(remoteKey)
+}
+
+// establish runs the handshake, applies the expected-fingerprint check and
+// the pin, registers the live link, and returns it. The caller serves the
+// link with runSession.
+func (n *Node) establish(c net.Conn, initiator bool, hsDone func(), wantFP string) (*link, error) {
 	release := func() {
 		if hsDone != nil {
 			hsDone()
@@ -388,25 +413,34 @@ func (n *Node) serve(ctx context.Context, c net.Conn, initiator bool, hsDone fun
 	if err != nil {
 		c.Close()
 		n.logf("handshake with %s failed: %v", c.RemoteAddr(), err)
-		return false
+		return nil, fmt.Errorf("handshake with %s failed: %w", c.RemoteAddr(), err)
 	}
 	if string(sc.RemoteKey) == string(n.id.Key.Public) {
 		sc.Close()
-		return false // talked to ourselves
+		return nil, errors.New("node: connected to ourselves")
+	}
+	// An explicit dial can name the key it expects, so an impostor holding
+	// the name never reaches the pin in the first place.
+	if wantFP != "" && !fpMatches(wantFP, sc.RemoteKey) {
+		sc.Close()
+		n.logf("REFUSED %q: dialed expecting fingerprint %s, remote presented %s…",
+			sc.RemoteName, wantFP, identity.Fingerprint(sc.RemoteKey)[:8])
+		return nil, fmt.Errorf("%w: remote key is %s…, expected %s", ErrFPMismatch,
+			identity.Fingerprint(sc.RemoteKey)[:8], wantFP)
 	}
 
 	peer, ok, err := n.cfg.Store.Observe(sc.RemoteName, sc.RemoteKey, time.Now())
 	if err != nil {
 		sc.Close()
 		n.logf("store: %v", err)
-		return false
+		return nil, err
 	}
 	if !ok {
 		sc.Close()
 		n.logf("REFUSED %q: key %s… does not match pinned %s…", sc.RemoteName,
 			identity.Fingerprint(sc.RemoteKey)[:8], peer.FP[:8])
 		n.emit(Event{Type: "peers", Peer: peer.Name})
-		return false
+		return nil, fmt.Errorf("node: key for %q does not match the pin", peer.Name)
 	}
 
 	l := newLink(n, sc, peer.Name)
@@ -419,20 +453,33 @@ func (n *Node) serve(ctx context.Context, c net.Conn, initiator bool, hsDone fun
 	n.mu.Unlock()
 	n.logf("session up with %q (%s…) from %s", peer.Name, peer.FP[:8], sc.RemoteAddr())
 	n.emit(Event{Type: "peers", Peer: peer.Name})
+	return l, nil
+}
 
+// runSession serves an established link until it ends, then cleans up.
+func (n *Node) runSession(ctx context.Context, l *link) {
+	key := strings.ToLower(l.peer)
 	n.goRun(func() { l.pingLoop(ctx) })
-	n.goRun(func() { n.flush(peer.Name, true) })
+	n.goRun(func() { n.flush(l.peer, true) })
 	l.readLoop(ctx)
 
-	sc.Close()
+	l.conn.Close()
 	n.mu.Lock()
 	if n.live[key] == l {
 		delete(n.live, key)
 	}
 	n.mu.Unlock()
-	n.logf("session down with %q", peer.Name)
-	n.emit(Event{Type: "peers", Peer: peer.Name})
-	return true
+	n.logf("session down with %q", l.peer)
+	n.emit(Event{Type: "peers", Peer: l.peer})
+}
+
+func (n *Node) serve(ctx context.Context, c net.Conn, initiator bool, hsDone func(), wantFP string) error {
+	l, err := n.establish(c, initiator, hsDone, wantFP)
+	if err != nil {
+		return err
+	}
+	n.runSession(ctx, l)
+	return nil
 }
 
 func (n *Node) linkFor(name string) *link {
@@ -675,17 +722,26 @@ func (n *Node) DeleteFromOutbox(id string) error {
 }
 
 // Dial connects to a peer at a specific host:port (add-by-address).
-func (n *Node) Dial(host, port string) error {
+//
+// fingerprint, when non-empty, is the remote's full fingerprint as shown on
+// their device (raw hex or the grouped display form, spacing and case do not
+// matter). The handshake is refused — before anything is pinned — unless the
+// key the remote presents hashes to it, so an address typed from a chat
+// message cannot get an impostor trusted by first contact.
+func (n *Node) Dial(host, port, fingerprint string) error {
 	addr := net.JoinHostPort(host, port)
 	d := net.Dialer{Timeout: 5 * time.Second}
 	conn, err := d.Dial("tcp", addr)
 	if err != nil {
 		return fmt.Errorf("dial %s: %w", addr, err)
 	}
-	established := n.serve(context.Background(), conn, true, nil)
-	if !established {
-		return fmt.Errorf("dial %s: handshake failed", addr)
+	l, err := n.establish(conn, true, nil, fingerprint)
+	if err != nil {
+		return fmt.Errorf("dial %s: %w", addr, err)
 	}
+	// The session serves itself from here; the caller learns of a fingerprint
+	// refusal immediately instead of when the session eventually ends.
+	n.goRun(func() { n.runSession(context.Background(), l) })
 	return nil
 }
 

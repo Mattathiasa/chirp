@@ -3,10 +3,13 @@ package node
 import (
 	"context"
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"net"
 	"path/filepath"
 	"runtime"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -468,5 +471,45 @@ func TestTypingAndReceiptsRespectTheSettings(t *testing.T) {
 		case <-deadline:
 			t.Fatalf("only saw %v after enabling both settings", got)
 		}
+	}
+}
+
+// An explicit dial that names a fingerprint refuses an impostor before the
+// key is pinned, accepts the real key in any display form, and returns as
+// soon as the session is up instead of blocking for its lifetime.
+func TestDialChecksTheExpectedFingerprint(t *testing.T) {
+	hub := discovery.NewHub()
+	a := newRig(t, hub, "Alice")
+	b := newRig(t, hub, "Bob")
+	c := newRig(t, hub, "Carol")
+
+	good := identity.Fingerprint(b.id.Key.Public)
+
+	// Carol answers, but we expected Bob's key: refused, nothing pinned.
+	err := a.n.Dial("127.0.0.1", strconv.Itoa(c.n.Port()), good)
+	if !errors.Is(err, ErrFPMismatch) {
+		t.Fatalf("expected a fingerprint mismatch, got %v", err)
+	}
+	if _, perr := a.st.GetPeer("Carol"); !errors.Is(perr, store.ErrNotFound) {
+		t.Fatal("the impostor was pinned despite the fingerprint check")
+	}
+
+	// The real fingerprint connects, even in grouped, spaced, uppercase form.
+	grouped := strings.ToUpper(strings.Join(identity.FingerprintGroups(good), " "))
+	if err := a.n.Dial("127.0.0.1", strconv.Itoa(b.n.Port()), grouped); err != nil {
+		t.Fatalf("grouped fingerprint refused: %v", err)
+	}
+	waitFor(t, "bob pinned and online", func() bool { return online(a.n, "Bob") })
+
+	// A dial returns after establishment rather than hanging on the session.
+	done := make(chan error, 1)
+	go func() { done <- a.n.Dial("127.0.0.1", strconv.Itoa(b.n.Port()), good) }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("second dial: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Dial blocked instead of returning once the session was up")
 	}
 }

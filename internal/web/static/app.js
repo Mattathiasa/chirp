@@ -1278,7 +1278,7 @@ function viewNearby() {
 // The radar redraws whenever a peer comes or goes, which is often. The input
 // and its error are built once and reused, so a background update cannot wipe
 // an address someone is halfway through typing.
-let $addr, $addrErr;
+let $addr, $addrFP, $addrErr;
 
 async function connectByAddress() {
   const v = $addr.value.trim();
@@ -1295,8 +1295,12 @@ async function connectByAddress() {
       if (i < 1) throw new Error('Enter host:port, or a chirp:// invite');
       host = v.slice(0, i); port = v.slice(i + 1);
     }
-    await api('POST', '/api/dial', { host, port });
-    $addr.value = '';
+    // A fingerprint pasted from the other device's trust panel is checked
+    // during the handshake, so a wrong address cannot get an impostor
+    // trusted on first contact.
+    const fp = $addrFP.value.trim();
+    await api('POST', '/api/dial', { host, port, fingerprint: fp || undefined });
+    $addr.value = ''; $addrFP.value = '';
     toast('Connecting\u2026');
     await loadPeers();
   } catch (e) { $addrErr.textContent = e.message; }
@@ -1305,15 +1309,17 @@ async function connectByAddress() {
 function addByAddress() {
   if (!$addr) {
     $addr = h('input', { class: 'in', placeholder: '192.168.1.40:47120 or chirp://add/…', 'aria-label': 'Address or invite link' });
+    $addrFP = h('input', { class: 'in mono', placeholder: 'Optional: their fingerprint, from their trust panel', 'aria-label': 'Expected fingerprint', spellcheck: 'false' });
     $addrErr = h('div', { class: 'err' });
     $addr.addEventListener('keydown', (e) => { if (e.key === 'Enter') connectByAddress(); });
   }
   const input = $addr;
+  const fp = $addrFP;
   const err = $addrErr;
   const connect = connectByAddress;
   return h('div', {},
-    h('p', { class: 'muted', style: 'font-size:13px' }, 'Paste what the other device shows under Your invite. Chirp still checks their key on connect, so a wrong address fails rather than trusting the wrong person.'),
-    input, err,
+    h('p', { class: 'muted', style: 'font-size:13px' }, 'Paste what the other device shows under Your invite. Add their fingerprint and Chirp refuses to talk to anyone else holding that name.'),
+    input, fp, err,
     h('button', { class: 'btn primary block', style: 'margin-top:12px', onclick: connect }, 'Connect'));
 }
 

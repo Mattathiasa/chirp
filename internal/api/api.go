@@ -392,13 +392,18 @@ func (s *Server) forget(w http.ResponseWriter, r *http.Request, n *node.Node) {
 
 func (s *Server) dial(w http.ResponseWriter, r *http.Request, n *node.Node) {
 	var in struct {
-		Host string `json:"host"`
-		Port string `json:"port"`
+		Host        string `json:"host"`
+		Port        string `json:"port"`
+		Fingerprint string `json:"fingerprint"` // optional: full fingerprint the remote must present
 	}
 	if !readJSON(w, r, &in) {
 		return
 	}
-	if err := n.Dial(in.Host, in.Port); err != nil {
+	if err := n.Dial(in.Host, in.Port, in.Fingerprint); err != nil {
+		if errors.Is(err, node.ErrFPMismatch) {
+			writeErr(w, http.StatusForbidden, "the key the remote presented does not match the fingerprint you gave; nothing was trusted")
+			return
+		}
 		writeErr(w, http.StatusBadGateway, err.Error())
 		return
 	}
