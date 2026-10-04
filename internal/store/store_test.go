@@ -287,9 +287,11 @@ func TestEncryptedOpenWithWrongKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s2.Close()
-	_, err = s2.LoadIdentity()
-	if err == nil {
-		t.Fatal("should fail with wrong key")
+	// The identity key is stored without encKey on purpose: encKey is derived
+	// from it, so it could never decrypt itself on reopen. Everything else —
+	// including message bodies — must be unreadable with the wrong key.
+	if ms, err := s2.Messages("Sam", 10); err == nil || len(ms) > 0 {
+		t.Fatalf("message data readable with wrong key: %d messages, err %v", len(ms), err)
 	}
 }
 

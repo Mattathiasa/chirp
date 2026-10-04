@@ -434,3 +434,62 @@ func TestFilePreviewRefusesSVG(t *testing.T) {
 		t.Fatal("an SVG was offered for inline display")
 	}
 }
+
+// The unlock flow: protect the database with a passphrase, restart into a
+// locked shell, and unlock through the API.
+func TestUnlockFlow(t *testing.T) {
+	hub := discovery.NewHub()
+	dir := t.TempDir()
+	cfg := app.Config{
+		DataDir: dir, ListenAddr: "127.0.0.1:0",
+		NewDisc: func() discovery.Discovery { return hub.New() },
+		Tune:    func(c *node.Config) { c.DialTick = 50 * time.Millisecond; c.PingEvery = 100 * time.Millisecond },
+	}
+	a, err := app.Open(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := newClient(t, a)
+
+	if r, b := c.do("POST", "/api/setup", map[string]string{"name": "Locked Out"}, nil); r.StatusCode != 200 {
+		t.Fatalf("setup: %d %s", r.StatusCode, b)
+	}
+	pass := "a long and safe passphrase"
+	if r, b := c.do("POST", "/api/passphrase", map[string]string{"passphrase": pass}, nil); r.StatusCode != 200 {
+		t.Fatalf("passphrase: %d %s", r.StatusCode, b)
+	}
+	a.Close() // release the database for the restart
+
+	// A fresh app without the passphrase is a locked shell: state says so and
+	// node-backed endpoints refuse.
+	locked, err := app.Open(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !locked.NeedsPassphrase() {
+		t.Fatal("the app did not lock")
+	}
+	c2 := newClient(t, locked)
+	if r, b := c2.do("GET", "/api/state", nil, nil); r.StatusCode != 200 || !strings.Contains(string(b), `"locked":true`) {
+		t.Fatalf("locked state: %d %s", r.StatusCode, b)
+	}
+	if r, _ := c2.do("GET", "/api/me", nil, nil); r.StatusCode != 409 {
+		t.Fatalf("me while locked: %d", r.StatusCode)
+	}
+
+	// The wrong passphrase is a 401; the right one unlocks and answers state.
+	if r, _ := c2.do("POST", "/api/unlock", map[string]string{"passphrase": "not it"}, nil); r.StatusCode != 401 {
+		t.Fatalf("wrong unlock: %d", r.StatusCode)
+	}
+	r, b := c2.do("POST", "/api/unlock", map[string]string{"passphrase": pass}, nil)
+	if r.StatusCode != 200 {
+		t.Fatalf("unlock: %d %s", r.StatusCode, b)
+	}
+	if r, b := c2.do("GET", "/api/me", nil, nil); r.StatusCode != 200 || !strings.Contains(string(b), "Locked Out") {
+		t.Fatalf("me after unlock: %d %s", r.StatusCode, b)
+	}
+	if r, b := c2.do("GET", "/api/state", nil, nil); r.StatusCode != 200 || strings.Contains(string(b), `"locked":true`) {
+		t.Fatalf("state after unlock: %d %s", r.StatusCode, b)
+	}
+	locked.Close()
+}

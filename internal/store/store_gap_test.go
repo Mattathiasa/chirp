@@ -86,7 +86,10 @@ func TestPendingSortsAcrossPeersBySeq(t *testing.T) {
 	s := openRoomStore(t)
 	now := time.Now()
 	// Interleave two peers: seq 1,3 for Sam and 2,4 for Dana.
-	pairs := []struct{ peer string; n int }{
+	pairs := []struct {
+		peer string
+		n    int
+	}{
 		{"Sam", 1}, {"Dana", 2}, {"Sam", 3}, {"Dana", 4},
 	}
 	for _, p := range pairs {

@@ -5,11 +5,14 @@
 package app
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/Mattathiasa/chirp/internal/discovery"
+	"github.com/Mattathiasa/chirp/internal/store"
 	"go.uber.org/goleak"
 )
 
@@ -168,6 +171,75 @@ func TestRestoreRejectsGarbage(t *testing.T) {
 	if err := a.Restore([]byte("not a backup at all"), "a safe passphrase"); err == nil {
 		t.Fatal("garbage backup accepted")
 	}
+}
+
+// A passphrase locks the database: opening without it yields a shell app that
+// runs nothing, the wrong passphrase is refused, and the right one restores
+// the identity and the data.
+func TestPassphraseLocksAndUnlocks(t *testing.T) {
+	dir := t.TempDir()
+	a, err := Open(testConfig(dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Setup("Locked Out"); err != nil {
+		t.Fatal(err)
+	}
+	if _, dup, err := a.St.AddMessage(store.Message{ID: "00112233445566778899aabbccddeeff", Peer: "Sam", Dir: store.DirIn, Body: "locked treasure", TS: time.Now(), Status: store.StatusReceived}); err != nil || dup {
+		t.Fatal(err, dup)
+	}
+	pass := "a long and safe passphrase"
+	if err := a.EnablePassphrase(pass); err != nil {
+		t.Fatal(err)
+	}
+	a.Close()
+
+	// Reopening without the passphrase returns a locked shell, not an error.
+	locked, err := Open(testConfig(dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !locked.NeedsPassphrase() {
+		t.Fatal("Open without a passphrase did not lock")
+	}
+	if !errors.Is(locked.OpenErr(), store.ErrPassphraseRequired) {
+		t.Fatalf("OpenErr: %v", locked.OpenErr())
+	}
+	if locked.Node() != nil || locked.St != nil {
+		t.Fatal("the shell runs a node or holds a store")
+	}
+	locked.Close() // must be safe on a shell
+
+	// The wrong passphrase is refused.
+	if _, err := Unlock(testConfig(dir), "not the passphrase"); err == nil {
+		t.Fatal("the wrong passphrase opened the database")
+	}
+
+	// The right passphrase restores identity and data, both via Unlock and a
+	// plain Open with Config.Passphrase.
+	a2, err := Unlock(testConfig(dir), pass)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := a2.Node(); n == nil || n.Identity().Name != "Locked Out" {
+		t.Fatalf("unlocked node: %v", a2.Node())
+	}
+	ms, err := a2.St.Messages("Sam", 10)
+	if err != nil || len(ms) != 1 || ms[0].Body != "locked treasure" {
+		t.Fatalf("messages after unlock: %v %+v", err, ms)
+	}
+	a2.Close()
+
+	cfg := testConfig(dir)
+	cfg.Passphrase = pass
+	a3, err := Open(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := a3.Node(); n == nil || n.Identity().Name != "Locked Out" {
+		t.Fatalf("open with passphrase: %v", a3.Node())
+	}
+	a3.Close()
 }
 
 func contains(haystack, needle []byte) bool {

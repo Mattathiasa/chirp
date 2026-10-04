@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	bolt "go.etcd.io/bbolt"
 
@@ -47,6 +48,10 @@ const (
 	StatusDelivered = "delivered" // peer acked
 	StatusReceived  = "received"  // inbound
 )
+
+// ErrPassphraseRequired is returned when a database protected by a passphrase
+// is opened without one.
+var ErrPassphraseRequired = errors.New("store: database passphrase required")
 
 // ErrNotFound is returned for missing peers and messages.
 var ErrNotFound = errors.New("store: not found")
@@ -94,7 +99,8 @@ func DefaultSettings() Settings {
 // Store wraps a bbolt DB with optional encryption at rest.
 type Store struct {
 	db       *bolt.DB
-	encKey   []byte // nil = plaintext
+	encKey   []byte // nil = plaintext; protects everything but the identity record
+	idKey    []byte // nil = identity record in plaintext; set when a passphrase protects the database
 	filesDir string // on-disk encrypted file storage
 }
 
@@ -107,9 +113,18 @@ func (s *Store) SetKey(key []byte) { s.encKey = key }
 // Key returns the current encryption key (nil if unencrypted).
 func (s *Store) Key() []byte { return s.encKey }
 
-// Open opens or creates the database at path without encryption.
+// Open opens or creates the database at path without encryption. It refuses
+// a database that is protected by a passphrase: OpenWithPassphrase unlocks it.
 func Open(path string) (*Store, error) {
-	return openStore(path, nil)
+	s, err := openStore(path, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	if s.PassphraseSet() {
+		s.Close()
+		return nil, ErrPassphraseRequired
+	}
+	return s, nil
 }
 
 // OpenWithKey opens the database with an encryption key. Message bodies,
@@ -118,10 +133,144 @@ func OpenWithKey(path string, key []byte) (*Store, error) {
 	if len(key) != 32 {
 		return nil, errors.New("store: encryption key must be 32 bytes")
 	}
-	return openStore(path, key)
+	s, err := openStore(path, key, nil)
+	if err != nil {
+		return nil, err
+	}
+	// An explicit key cannot unlock a passphrase-protected database: the
+	// identity record lives under the passphrase key, and everything else
+	// under the identity key the passphrase reveals.
+	if s.PassphraseSet() {
+		s.Close()
+		return nil, ErrPassphraseRequired
+	}
+	return s, nil
 }
 
-func openStore(path string, encKey []byte) (*Store, error) {
+// OpenWithPassphrase opens a database, unlocking it with the user's passphrase
+// when one protects it. A database that was set up with a passphrase refuses
+// to open without it (ErrPassphraseRequired), and a wrong passphrase fails on
+// the first decrypt. A database without a passphrase opens normally and the
+// passphrase, if given, is unused until EnablePassphrase turns the mode on.
+func OpenWithPassphrase(path, passphrase string) (*Store, error) {
+	s, err := openStore(path, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	mode, salt, err := s.loadKDF()
+	if err != nil {
+		s.Close()
+		return nil, err
+	}
+	if mode != "argon2id" {
+		return s, nil // nothing to unlock
+	}
+	if passphrase == "" {
+		s.Close()
+		return nil, ErrPassphraseRequired
+	}
+	s.idKey = crypto.DeriveKeyFromPassphraseSalt(passphrase, salt)
+	// Everything except the identity record is encrypted under a key derived
+	// from the identity, which itself was encrypted under the passphrase key.
+	// Unlocking the identity therefore unlocks the rest.
+	id, err := s.LoadIdentity()
+	if err != nil {
+		s.Close()
+		// A wrong passphrase is a decrypt failure; make it say so.
+		if strings.Contains(strings.ToLower(err.Error()), "decrypt") {
+			return nil, errors.New("store: wrong database passphrase")
+		}
+		return nil, err
+	}
+	if id != nil {
+		s.encKey = crypto.DeriveKeyFromIdentity(id.Key.Private)
+	}
+	return s, nil
+}
+
+// loadKDF reads the key-derivation record. An empty mode means none was set.
+func (s *Store) loadKDF() (mode string, salt []byte, err error) {
+	err = s.db.View(func(tx *bolt.Tx) error {
+		if v := tx.Bucket(bMeta).Get([]byte("kdf")); v != nil {
+			mode = string(v)
+		}
+		if v := tx.Bucket(bMeta).Get([]byte("kdSalt")); v != nil {
+			salt = append([]byte(nil), v...)
+		}
+		return nil
+	})
+	return mode, salt, err
+}
+
+// EnablePassphrase turns on passphrase protection for an already-populated
+// database. The identity private key is re-written encrypted under an
+// Argon2id-derived key; every other value stays under the identity-derived
+// key it already had, and becomes unreadable to a copy of the database file
+// because the identity it is derived from no longer decrypts without the
+// passphrase. Requires that the identity is already on disk and that every
+// value was written under the key (the app sets its key before any write;
+// rows written plaintext stay plaintext and unreadable once a key exists).
+func (s *Store) EnablePassphrase(passphrase string) error {
+	if utf8.RuneCountInString(passphrase) < 12 {
+		return errors.New("store: passphrase must be at least 12 characters")
+	}
+	if mode, _, _ := s.loadKDF(); mode == "argon2id" {
+		return errors.New("store: a passphrase is already set")
+	}
+	// Read the identity while it is still readable.
+	id, err := s.LoadIdentity()
+	if err != nil {
+		return fmt.Errorf("store: enable passphrase: %w", err)
+	}
+	if id == nil {
+		return errors.New("store: no identity to protect")
+	}
+	_, salt := crypto.DeriveKeyFromPassphrase(passphrase)
+	s.idKey = crypto.DeriveKeyFromPassphraseSalt(passphrase, salt)
+	err = s.db.Update(func(tx *bolt.Tx) error {
+		if err := tx.Bucket(bMeta).Put([]byte("kdf"), []byte("argon2id")); err != nil {
+			return err
+		}
+		if err := tx.Bucket(bMeta).Put([]byte("kdSalt"), salt); err != nil {
+			return err
+		}
+		// Re-write the identity record so its private key is encrypted.
+		v := tx.Bucket(bMeta).Get([]byte("identity"))
+		if v == nil {
+			return ErrNotFound
+		}
+		var rec idRecord
+		if err := json.Unmarshal(v, &rec); err != nil {
+			return err
+		}
+		enc, err := s.encryptWith(s.idKey, rec.Priv)
+		if err != nil {
+			return err
+		}
+		rec.Priv = enc
+		nv, _ := json.Marshal(rec)
+		return tx.Bucket(bMeta).Put([]byte("identity"), nv)
+	})
+	if err != nil {
+		s.idKey = nil
+		return err
+	}
+	// A store opened without a key starts protecting new data now; one opened
+	// with an explicit key keeps it, and one whose key is identity-derived
+	// already has exactly this value.
+	if s.encKey == nil {
+		s.encKey = crypto.DeriveKeyFromIdentity(id.Key.Private)
+	}
+	return nil
+}
+
+// PassphraseSet reports whether a passphrase protects this database.
+func (s *Store) PassphraseSet() bool {
+	mode, _, _ := s.loadKDF()
+	return mode == "argon2id"
+}
+
+func openStore(path string, encKey, idKey []byte) (*Store, error) {
 	db, err := bolt.Open(path, 0o600, &bolt.Options{Timeout: 2 * time.Second})
 	if err != nil {
 		return nil, fmt.Errorf("store: open %s: %w", path, err)
@@ -140,7 +289,7 @@ func openStore(path string, encKey []byte) (*Store, error) {
 	}
 	filesDir := filepath.Join(filepath.Dir(path), "files")
 	_ = os.MkdirAll(filesDir, 0o700)
-	return &Store{db: db, encKey: encKey, filesDir: filesDir}, nil
+	return &Store{db: db, encKey: encKey, idKey: idKey, filesDir: filesDir}, nil
 }
 
 // Close closes the database.
@@ -148,16 +297,35 @@ func (s *Store) Close() error { return s.db.Close() }
 
 // ---- encryption helpers ----
 
-func (s *Store) encrypt(plaintext []byte) ([]byte, error) {
-	if s.encKey == nil || len(plaintext) == 0 {
+// encryptWith encrypts under an explicit key so the identity record can use
+// the passphrase-derived key while everything else uses encKey.
+func (s *Store) encryptWith(key, plaintext []byte) ([]byte, error) {
+	if key == nil || len(plaintext) == 0 {
 		return plaintext, nil
 	}
-	return crypto.Encrypt(s.encKey, plaintext)
+	return crypto.Encrypt(key, plaintext)
+}
+
+func (s *Store) encrypt(plaintext []byte) ([]byte, error) {
+	return s.encryptWith(s.encKey, plaintext)
 }
 
 func (s *Store) decrypt(data []byte) ([]byte, error) {
-	if s.encKey == nil || !crypto.IsEncrypted(data) {
+	if !crypto.IsEncrypted(data) {
 		return data, nil
+	}
+	// The identity record may be encrypted under the passphrase key while
+	// encKey is not yet set, so try both.
+	for _, key := range [][]byte{s.encKey, s.idKey} {
+		if key == nil {
+			continue
+		}
+		if pt, err := crypto.Decrypt(key, data); err == nil {
+			return pt, nil
+		}
+	}
+	if s.encKey == nil && s.idKey == nil {
+		return nil, errors.New("store: encrypted data but no key")
 	}
 	return crypto.Decrypt(s.encKey, data)
 }
@@ -174,7 +342,13 @@ func (s *Store) encryptString(s2 string) (string, error) {
 }
 
 func (s *Store) decryptString(s2 string) (string, error) {
-	if s.encKey == nil || s2 == "" {
+	if s2 == "" {
+		return s2, nil
+	}
+	// Only encrypted stores base64-encode values, so an unencrypted store's
+	// values pass through untouched: they are arbitrary plaintext, not valid
+	// base64.
+	if s.encKey == nil && s.idKey == nil {
 		return s2, nil
 	}
 	raw, err := base64.StdEncoding.DecodeString(s2)
@@ -184,7 +358,7 @@ func (s *Store) decryptString(s2 string) (string, error) {
 	if !crypto.IsEncrypted(raw) {
 		return s2, nil
 	}
-	pt, err := crypto.Decrypt(s.encKey, raw)
+	pt, err := s.decrypt(raw)
 	if err != nil {
 		return "", err
 	}
@@ -228,7 +402,10 @@ func (s *Store) LoadIdentity() (*identity.Identity, error) {
 // SaveIdentity stores the identity. It refuses to overwrite an existing one:
 // replacing a key is destructive and must be an explicit reset.
 func (s *Store) SaveIdentity(id *identity.Identity) error {
-	priv, err := s.encrypt(id.Key.Private)
+	// The private key must never be encrypted under the key derived from
+	// itself: reopening would need the key to read the key. It is stored in
+	// plaintext, or under the passphrase-derived key when one is set.
+	priv, err := s.encryptWith(s.idKey, id.Key.Private)
 	if err != nil {
 		return fmt.Errorf("store: encrypt identity key: %w", err)
 	}

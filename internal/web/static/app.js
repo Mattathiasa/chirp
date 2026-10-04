@@ -1360,6 +1360,8 @@ function viewSettings() {
       h('div', { class: 'seg' }, opts.map(([v, l]) => h('button', { 'aria-pressed': String(st.retentionDays === v), onclick: () => save({ retentionDays: v }) }, l)))),
     h('div', { class: 'card', style: 'padding:6px 18px' },
       h('div', { class: 'toggle' }, h('div', { class: 'grow' }, h('div', { class: 't' }, 'Back up your key'), h('div', { class: 'n' }, 'Your key is your identity. There is no account to recover.')), h('button', { class: 'btn', onclick: showBackup }, icon('key', 18), 'Back up')),
+      h('div', { class: 'toggle' }, h('div', { class: 'grow' }, h('div', { class: 't' }, 'Require a passphrase on start'), h('div', { class: 'n' }, 'Re-encrypts your identity under it. Without the passphrase this database will not open.')),
+        h('button', { class: 'btn', onclick: showPassphrase }, icon('lock', 18), 'Set')),
       h('div', { class: 'toggle' }, h('div', { class: 'grow' }, h('div', { class: 't', style: 'color:var(--bad)' }, 'Delete all messages'), h('div', { class: 'n' }, 'Keeps your key and pinned people.')),
         h('button', { class: 'btn danger', onclick: () => confirmBox('Delete every message?', 'This cannot be undone. Unsent messages are deleted too.', async () => { await api('POST', '/api/messages/clear'); S.msgs = []; toast('All messages deleted'); await loadPeers(); }, 'Delete all') }, 'Delete'))),
     h('p', { class: 'muted', style: 'font-size:13px;padding:0 6px' }, 'Chirp has no server, so nothing here is stored anywhere except your devices.')));
@@ -1396,6 +1398,28 @@ function showBackup() {
       h('div', { class: 'banner warn', style: 'border-radius:18px' }, icon('key', 22), h('div', { class: 'grow' }, 'If you lose this device without a backup, everyone will see a new key and must verify you again. Chirp cannot recover a forgotten passphrase.')),
       h('div', { class: 'field' }, h('label', { for: 'bp' }, 'Backup passphrase'), input), bars, label,
       h('div', { style: 'display:flex;gap:10px;justify-content:flex-end' }, h('button', { class: 'btn', onclick: close }, 'Cancel'), go));
+  });
+}
+
+// The database itself can be locked with a passphrase: the identity is
+// re-encrypted under an Argon2id-derived key and Chirp asks for it on start.
+function showPassphrase() {
+  modal((box, close) => {
+    const input = h('input', { id: 'dbp', type: 'password', autocomplete: 'new-password', placeholder: 'At least 12 characters' });
+    const go = h('button', { class: 'btn primary', disabled: true }, 'Lock this database');
+    input.addEventListener('input', () => { go.disabled = [...input.value].length < MIN_PASSPHRASE; });
+    go.addEventListener('click', async () => {
+      try {
+        await api('POST', '/api/passphrase', { passphrase: input.value });
+        close();
+        toast('Passphrase set. Chirp will ask for it the next time it starts.');
+      } catch (e) { toast(e.message, true); }
+    });
+    box.append(h('h1', {}, 'Require a passphrase on start'),
+      h('div', { class: 'banner warn', style: 'border-radius:18px' }, icon('warn', 22), h('div', { class: 'grow' }, 'Chirp cannot recover a forgotten passphrase, and without it this database will not open. There is no reset.')),
+      h('div', { class: 'field' }, h('label', { for: 'dbp' }, 'Passphrase'), input),
+      h('div', { style: 'display:flex;gap:10px;justify-content:flex-end' }, h('button', { class: 'btn', onclick: close }, 'Cancel'), go));
+    input.focus();
   });
 }
 
@@ -1692,10 +1716,45 @@ function stepReady() {
 
 async function boot() {
   const st = await getJSON('/api/state');
-  if (st.setup) { renderGate(); return; }
+  if (st.setup) {
+    if (st.locked) return renderUnlock();
+    renderGate();
+    return;
+  }
   S.me = st.me;
   await Promise.all([loadSettings(), loadPeers()]);
   mountShell();
   connectEvents();
+}
+
+// A database protected by a passphrase opens as a locked shell: this is the
+// screen that unlocks it.
+function renderUnlock() {
+  const pass = h('input', { type: 'password', placeholder: 'Database passphrase', 'aria-label': 'Database passphrase', autocomplete: 'current-password' });
+  const err = h('div', { class: 'err' }, '');
+  const go = h('button', { class: 'btn primary block' }, 'Unlock');
+  const sync = () => { go.disabled = !pass.value; };
+  pass.addEventListener('input', sync);
+  sync();
+  go.addEventListener('click', async () => {
+    go.disabled = true;
+    err.textContent = '';
+    try {
+      await api('POST', '/api/unlock', { passphrase: pass.value });
+      await boot();
+    } catch (e) {
+      err.textContent = /passphrase/i.test(e.message) ? 'That is not the passphrase.' : e.message;
+      go.disabled = false;
+    }
+  });
+  pass.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !go.disabled) go.click(); });
+
+  $app.replaceChildren(h('div', { class: 'welcome' }, h('div', { class: 'card' },
+    h('div', { class: 'brandmark' }, h('span', { class: 'logo' }, logoSvg()), 'chirp'),
+    h('h1', {}, 'This Chirp is locked.'),
+    h('p', { class: 'hint' }, 'The data on this device is protected with a passphrase. It unlocks here, in memory only; nothing is sent anywhere.'),
+    h('div', { class: 'field' }, h('label', {}, 'Passphrase'), pass, err),
+    go)));
+  pass.focus();
 }
 boot().catch(() => { $app.replaceChildren(h('div', { class: 'empty', style: 'margin-top:20vh' }, h('h3', {}, 'Cannot reach the Chirp daemon'), h('p', {}, 'Is chirpd still running?'))); });

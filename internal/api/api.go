@@ -48,6 +48,8 @@ func New(a *app.App) *Server {
 	m.HandleFunc("GET /api/state", s.state)
 	m.HandleFunc("POST /api/setup", s.setup)
 	m.HandleFunc("POST /api/restore", s.restore)
+	m.HandleFunc("POST /api/unlock", s.unlock)
+	m.HandleFunc("POST /api/passphrase", s.needNode(s.enablePassphrase))
 
 	m.HandleFunc("GET /api/me", s.needNode(s.me))
 	m.HandleFunc("POST /api/me/rename", s.needNode(s.rename))
@@ -209,10 +211,53 @@ func fail(w http.ResponseWriter, err error) {
 func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 	n := s.app.Node()
 	if n == nil {
+		// A passphrase-protected database that has not been unlocked looks
+		// different from a first run: the UI must show an unlock prompt, not
+		// the landing page.
+		if errors.Is(s.app.OpenErr(), store.ErrPassphraseRequired) {
+			writeJSON(w, 200, map[string]any{"setup": true, "locked": true})
+			return
+		}
 		writeJSON(w, 200, map[string]any{"setup": true})
 		return
 	}
 	writeJSON(w, 200, map[string]any{"setup": false, "me": n.Me()})
+}
+
+// unlock opens a passphrase-protected database.
+func (s *Server) unlock(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Passphrase string `json:"passphrase"`
+	}
+	if !readJSON(w, r, &in) {
+		return
+	}
+	a, err := app.Unlock(s.app.Cfg(), in.Passphrase)
+	if err != nil {
+		if errors.Is(err, store.ErrPassphraseRequired) || strings.Contains(strings.ToLower(err.Error()), "passphrase") {
+			writeErr(w, http.StatusUnauthorized, "wrong passphrase")
+			return
+		}
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.app.Replace(a)
+	s.state(w, r)
+}
+
+// enablePassphrase turns on at-rest protection for an already-running app.
+func (s *Server) enablePassphrase(w http.ResponseWriter, r *http.Request, n *node.Node) {
+	var in struct {
+		Passphrase string `json:"passphrase"`
+	}
+	if !readJSON(w, r, &in) {
+		return
+	}
+	if err := s.app.EnablePassphrase(in.Passphrase); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]bool{"ok": true})
 }
 
 func (s *Server) setup(w http.ResponseWriter, r *http.Request) {
